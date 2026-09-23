@@ -62,6 +62,9 @@ logging:
     root: INFO
     '[iq.twokeyok.orchestrator]': INFO
     '[com.ascertia]': WARN
+    # Jasypt narrates every property source at INFO, which buries the lines that
+    # matter when reading a start-up or a failure.
+    '[com.ulisesbocchio]': WARN
 
 #
 # Signing defaults. Keys mirror the deployed Ascertia Orchestrator configuration

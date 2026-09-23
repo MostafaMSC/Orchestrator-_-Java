@@ -224,10 +224,17 @@ public class SigningOrchestrationService {
         }
 
         if (command.containerType() != null && !command.containerType().isBlank()) {
-            if (!result.allowRequestContainerType()) {
+            String requested = command.containerType().trim();
+            // Only a *change* needs permission. A request repeating the container
+            // already in force is a no-op, and the documented curl example sends
+            // container_type=NONE explicitly — refusing that would reject callers
+            // who are following the API guide verbatim.
+            boolean changesAnything = !requested.equalsIgnoreCase(
+                    result.containerType() == null ? "" : result.containerType().trim());
+            if (changesAnything && !result.allowRequestContainerType()) {
                 throw new OrchestratorException(ErrorCode.CONTAINER_NOT_ALLOWED);
             }
-            result = result.withContainerType(command.containerType());
+            result = result.withContainerType(requested);
         }
 
         if (command.hashAlgo() != null && !command.hashAlgo().isBlank()) {

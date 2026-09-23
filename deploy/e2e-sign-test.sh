@@ -22,7 +22,7 @@ OUT_DIR="${OUT_DIR:-./e2e-out}"
 SIGNER_ID=""
 PIN=""
 INSECURE=""
-CONTAINER="NONE"
+CONTAINER=""   # only sent when --container is given
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -164,7 +164,10 @@ ok "unsigned test document ready"
 # ====================================================================
 step "5/6  Sign — Test PDF -> Orchestrator -> ADSS"
 # ====================================================================
-SIGN_ARGS=(-F "input_files=@$OUT_DIR/test-unsigned.pdf" -F "container_type=$CONTAINER")
+SIGN_ARGS=(-F "input_files=@$OUT_DIR/test-unsigned.pdf")
+# Send container_type only when asked. A client pinned to one container by
+# policy would otherwise be refused for restating the value already in force.
+[[ -n "$CONTAINER" ]] && SIGN_ARGS+=(-F "container_type=$CONTAINER")
 [[ -n "$SIGNER_ID" ]] && SIGN_ARGS+=(-F "signer_id=$SIGNER_ID")
 # The PIN is only needed for a natural person; it is never echoed.
 [[ -n "$PIN" ]] && SIGN_ARGS+=(-F "pin=$PIN")
@@ -202,7 +205,7 @@ fi
 # ====================================================================
 step "6/6  Verify the output is genuinely signed"
 # ====================================================================
-if [[ "$CONTAINER" != "NONE" ]]; then
+if [[ -n "$CONTAINER" && "$CONTAINER" != "NONE" ]]; then
   warn "container_type=$CONTAINER, so the response is an archive — skipping PDF verification"
   R_VALIDATE="SKIPPED"
   finish 0

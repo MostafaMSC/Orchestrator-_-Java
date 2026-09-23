@@ -54,6 +54,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "csc-config.registered-clients[0].default-signer-id=ministry_eseal",
         "csc-config.registered-clients[0].allowed-signer-ids[0]=ministry_eseal",
         "csc-config.registered-clients[0].overrides.allow-request-appearance=false",
+        "csc-config.registered-clients[0].overrides.allow-request-container-type=false",
 
         "csc-config.registered-clients[1].client-id=case_mgmt",
         "csc-config.registered-clients[1].client-secret=other",
@@ -301,6 +302,37 @@ class OrchestratorApiIntegrationTest {
                         .header("Authorization", HR_PORTAL))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error_code").value(1118));
+    }
+
+    /**
+     * A client pinned to one container may still restate it. The API guide's own
+     * curl example sends {@code container_type=NONE}, so refusing a request that
+     * changes nothing would reject callers following the documentation.
+     */
+    @Test
+    void allowsAPinnedClientToRestateTheContainerItAlreadyHas() throws Exception {
+        mvc.perform(multipart("/service/sign")
+                        .file(pdf("invoice.pdf"))
+                        .param("signer_id", "ministry_eseal")
+                        .param("container_type", "NONE")
+                        .header("Authorization", HR_PORTAL))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_PDF));
+
+        assertThat(backend.jobs).hasSize(1);
+    }
+
+    @Test
+    void refusesAPinnedClientThatActuallyChangesTheContainer() throws Exception {
+        mvc.perform(multipart("/service/sign")
+                        .file(pdf("invoice.pdf"))
+                        .param("signer_id", "ministry_eseal")
+                        .param("container_type", "ASiC-E")
+                        .header("Authorization", HR_PORTAL))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error_code").value(1110));
+
+        assertThat(backend.jobs).isEmpty();
     }
 
     @Test
