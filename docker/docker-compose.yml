@@ -1,0 +1,34 @@
+# Run the orchestrator as a container with the configuration mounted read-only.
+#
+#   cd twokeyok-orchestrator
+#   docker compose -f docker/docker-compose.yml up -d
+#
+services:
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: twokeyok/orchestrator:1.0.0
+    container_name: twokeyok-orchestrator
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      ORCHESTRATOR_PORT: "8443"
+      ORCHESTRATOR_CONFIG_DIR: /etc/twokeyok/orchestrator
+      LOG_DIR: /var/log/twokeyok-orchestrator
+    env_file:
+      # Secrets stay out of the compose file, out of the image and out of git.
+      # Create it first:  cp deploy/env/orchestrator.env.example deploy/env/orchestrator.env
+      - ../deploy/env/orchestrator.env
+    volumes:
+      - ../config:/etc/twokeyok/orchestrator:ro
+      - orchestrator-logs:/var/log/twokeyok-orchestrator
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  orchestrator-logs:

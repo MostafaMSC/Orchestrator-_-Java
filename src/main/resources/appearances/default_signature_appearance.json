@@ -1,0 +1,70 @@
+{
+  "template_id": "default_signature_appearance",
+  "name": "Default signature appearance",
+  "description": "Natural person visible signature: name, date, reason, location and contact details, with room for a handwritten signature image.",
+  "width": 463,
+  "height": 250,
+  "border": {
+    "show": true,
+    "color": { "r": 0, "g": 0, "b": 0 }
+  },
+  "text_font": {
+    "name": "Arial",
+    "size": 16,
+    "color": { "r": 0, "g": 0, "b": 0 }
+  },
+  "signature_field": {
+    "x": 200,
+    "y": 450,
+    "width": 200,
+    "height": 80,
+    "page_no": 1
+  },
+  "fields": {
+    "signed_by": {
+      "include": true,
+      "label": "Signed By",
+      "show_label": true,
+      "position": { "x": 14, "y": 5, "width": 197, "height": 18 }
+    },
+    "signing_date": {
+      "include": true,
+      "label": "Signing Date",
+      "show_label": true,
+      "value": "dd MMM yyyy HH:mm:ss zz",
+      "position": { "x": 14, "y": 28, "width": 280, "height": 18 }
+    },
+    "reason": {
+      "include": true,
+      "label": "Reason",
+      "show_label": true,
+      "position": { "x": 15, "y": 52, "width": 226, "height": 18 }
+    },
+    "location": {
+      "include": true,
+      "label": "Location",
+      "show_label": true,
+      "position": { "x": 15, "y": 74, "width": 183, "height": 18 }
+    },
+    "contact_info": {
+      "include": true,
+      "label": "Contact Info",
+      "show_label": true,
+      "position": { "x": 15, "y": 97, "width": 221, "height": 18 }
+    },
+    "hand_signature": {
+      "include": true,
+      "label": "Hand Signature",
+      "show_label": false,
+      "image_name": "hand-signature.png",
+      "position": { "x": 84, "y": 127, "width": 179, "height": 100 }
+    },
+    "company_logo": {
+      "include": false,
+      "label": "Company Logo",
+      "show_label": false,
+      "image_name": "company-logo.png",
+      "position": { "x": 274, "y": 80, "width": 180, "height": 163 }
+    }
+  }
+}

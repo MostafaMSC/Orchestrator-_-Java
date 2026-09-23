@@ -1,0 +1,139 @@
+#
+# An excerpt of the deployed Ascertia Orchestrator configuration, used by
+# ReferenceConfigurationCompatibilityTest to prove that a real file binds
+# unchanged onto this product's configuration model.
+#
+# Every secret has been replaced with a placeholder: this file is committed, so
+# nothing sensitive belongs in it.
+#
+signing:
+  description: Signing Module to integrate Ascertia's Remote Authorization Solution
+  contact: info@ascertia.com
+  authorization_text: Orchestrator-Required-Document-Authorization
+  debug-mode: false
+  debug-path: "/usr/local/ascertia/orchestrator/debug/"
+  basic-auth-type: implicit
+  match-subject-dn: false
+  truststore_path: /appdata/ascertia/orchestrator/config/adss-truststore.jks
+  truststore_password: REDACTED
+  default_credential_strategy: "LATEST"
+  one_time_signing:
+    enabled: false
+    delete_signers_after_transaction: true
+    revoke_one_time_certs: false
+    signer_id: "$CN"
+    subject_dn: "CN=$CN,OU=Development,O=techsource,C=$C,E=$EMAIL,L=$LOCALITY"
+  dss:
+    enabled: true
+    signature:
+      revocation_loading_strategy: OCSP_ONLY
+      revocation_data_verification: true
+      revocation_fallback: true
+      annotation_overlapping: true
+      revocation_loading_retries: 3
+      revocation_retry_interval: 100
+      timestamp_retries: 3
+      timestamp_retry_interval: 100
+      compute_hash: true
+      hash_algorithm: SHA384
+      dictionary_size: 12000
+      packaging: DETACHED
+      signature_level: PAdES_BASELINE_LTA
+      xml_packaging: ENVELOPING
+      xml_signature_level: XAdES_BASELINE_LT
+      cms_packaging: ENVELOPING
+      cms_signature_level: CAdES_BASELINE_LT
+      appearance:
+        enabled: true
+        use_default: true
+        appearances:
+          - template_id: default_signature_appearance
+            enabled: false
+            signature_text_position: BOTTOM
+            signed_by:
+              include_label: false
+              label: "Signed By: "
+              value: "Entity Name"
+            signing_date:
+              include_label: false
+              label: "Signed Date: "
+              value: "yyyy.MM.dd HH:mm:ss ZZ"
+            text_background_color:
+              r: 255
+              g: 255
+              b: 255
+              a: 0.5
+            text_font:
+              name: "Helvetica"
+              size: 6
+              color:
+                r: 0
+                g: 0
+                b: 254
+                a: 0.5
+            signature_field:
+              field_id: ""
+              page_no: 1
+              x: 10
+              y: 650
+              width: 200
+              height: 80
+            company_logo:
+              value: "images/company-seal.png"
+    ocsp:
+      url: "http://adss-ocsp.internal.example/adss/ocsp"
+      hash_algorithm: SHA1
+    tsa:
+      url: https://adss-tsa.internal.example:8778/adss/tsa
+      policy_id: '2.16.368.1.2.1.6'
+  certification:
+    url: http://localhost:8777/adss/certification/csi
+    client_id: Orchestrator-Signing
+    profile_id: adss:certification:profile:001
+  gateway:
+    url: http://localhost:8777/adss/signing/hdsi
+    client_id: Orchestrator-Signing
+    pdf_profile_id: adss:signing:profile:001
+    office_profile_id: adss:signing:profile:008
+    xml_profile_id: adss:signing:profile:003
+    file_profile_id: adss:signing:profile:003
+  ras:
+    url: https://adss-ras.internal.example
+    client_id: orchestrator
+    client_secret: REDACTED
+    profile_id: adss:ras:profile:005
+    device_id: SIGNING_ORCHESTRATOR_DEVICE
+    keystore_type: PKCS12
+    keystore_path: authorization/Client-Authentication-Key.pfx
+    keystore_password: REDACTED
+  verification:
+    request_mode: 2
+    url: http://adss-verify.internal.example/adss/verification/dss
+    client_id: 'Orchestrator-Verify'
+    profile_id: adss:verification:profile:001
+    cert_quality_level: 2
+    pk_quality_level: 2
+  authorization:
+    type: NONE
+    csr: authorization/Signing-Orchestrator-Authorization-Key-RSA.p10
+    pfx: authorization/Signing-Orchestrator-Authorization-Key-RSA.pfx
+    pfx_password: REDACTED
+
+csc-config:
+  csc-v1-info:
+    specs: 1.0.4.0
+    name: SH Guest CSC Gateway Service
+    region: AE
+    description: CSC v1 APIs relaying CSC calls to ADSS Server
+    idp-client-id: REDACTED
+    idp-client-secret: REDACTED
+  cache-expiry: 60
+  registered-clients:
+    - client-id: sh-client
+      client-secret: REDACTED
+      authorities:
+        - ROLE_CLIENT_CREDENTIALS
+    - client-id: ica_eseal_stage
+      client-secret: REDACTED
+      authorities:
+        - ROLE_CLIENT_CREDENTIALS

@@ -1,0 +1,261 @@
+#
+# TwoKeyOk MiddleWare Orchestrator — deployment configuration
+# ============================================================
+# Read from ${ORCHESTRATOR_CONFIG_DIR}/orchestrator.yml
+# (default on Linux: /etc/twokeyok/orchestrator).
+#
+# The key names match the deployed Ascertia Orchestrator configuration, so an
+# existing application.yml can be copied in for the parts this product
+# implements. docs/CONFIGURATION.md lists what is honoured and what is ignored.
+#
+# Every value accepts ${ENV_VAR} / ${ENV_VAR:default}, and a secret may be
+# written as ENC(...) — Jasypt decrypts it with JASYPT_ENCRYPTOR_PASSWORD.
+# Secrets belong in orchestrator.env, not here.
+#
+
+signing:
+  description: Signing middleware over Ascertia Remote Authorisation
+  contact: info@example.com
+  debug-mode: false
+  basic-auth-type: implicit
+
+  # NONE   — a credential must be named by the signer entry or the request
+  # LATEST — let the ADSS signing profile pick the signer's current certificate
+  default_credential_strategy: LATEST
+
+  # Truststore for outbound TLS to the ADSS services.
+  truststore_path: ${ADSS_TRUSTSTORE:/etc/twokeyok/orchestrator/tls/adss-truststore.jks}
+  truststore_password: ${ADSS_TRUSTSTORE_PASSWORD:}
+
+  # ------------------------------------------------------------------
+  # ADSS Signing Service. On an ADSS host this is localhost:8777.
+  # ------------------------------------------------------------------
+  gateway:
+    url: ${ADSS_SIGNING_URL:http://localhost:8777/adss/signing/hdsi}
+    client_id: ${ADSS_CLIENT_ID:Orchestrator-Signing}
+    pdf_profile_id: adss:signing:profile:001
+    request_mode: HTTP
+    timeout_ms: 120000
+    retries: 1
+    tls_protocol: TLSv1.2
+    # A natural person has interval x attempts to approve: 3 s x 60 = 3 minutes.
+    status_polling:
+      interval_ms: 3000
+      max_attempts: 60
+
+  # Only consulted when the signature level is LT / LTV / LTA.
+  verification:
+    request_mode: 2
+    url: ${ADSS_VERIFICATION_URL:http://adss-verify.internal.example/adss/verification/dss}
+    client_id: Orchestrator-Verify
+    profile_id: adss:verification:profile:001
+
+  # Remote Authorisation Service. The keystore is the client certificate ADSS
+  # and RAS require for mutual TLS.
+  ras:
+    url: ${ADSS_RAS_URL:https://adss-ras.internal.example}
+    client_id: ${ADSS_RAS_CLIENT_ID:orchestrator}
+    client_secret: ${ADSS_RAS_CLIENT_SECRET:}
+    profile_id: adss:ras:profile:005
+    device_id: SIGNING_ORCHESTRATOR_DEVICE
+    keystore_type: PKCS12
+    keystore_path: ${ADSS_CLIENT_PFX:/etc/twokeyok/orchestrator/tls/Client-Authentication-Key.pfx}
+    keystore_password: ${ADSS_CLIENT_PFX_PASSWORD:}
+
+  dss:
+    tsa:
+      url: ${ADSS_TSA_URL:https://adss-tsa.internal.example:8778/adss/tsa}
+      policy_id: '2.16.368.1.2.1.6'
+    ocsp:
+      url: ${ADSS_OCSP_URL:http://adss-ocsp.internal.example/adss/ocsp}
+      hash_algorithm: SHA1
+
+    # ----------------------------------------------------------------
+    # Signature defaults — the lowest layer of the precedence chain
+    # ----------------------------------------------------------------
+    signature:
+      compute_hash: true
+      local_hash: false
+      hash_algorithm: SHA384
+      dictionary_size: 12000
+      # PAdES_BASELINE_B | _T are produced by the ADSS signing profile;
+      # _LT and _LTA are requested here and need verification + TSA above.
+      signature_level: PAdES_BASELINE_LTA
+      signature_field_name: Signature1
+      signing_page: 1
+      container_type: NONE
+      data_to_be_displayed: Please review and authorise this signing transaction
+
+      appearance:
+        enabled: true
+        use_default: true
+        # Optional directory of JSON templates with per-field positioning,
+        # merged with the templates declared below.
+        store-path: ${ORCHESTRATOR_CONFIG_DIR:/etc/twokeyok/orchestrator}/appearances
+
+        appearances:
+          # --- Organisation e-seal ---------------------------------
+          - template_id: eseal_signature_appearance
+            name: Organisation e-seal
+            enabled: true
+            # Text placement relative to the image: TOP, BOTTOM, LEFT, RIGHT
+            signature_text_position: RIGHT
+            signed_by:
+              include_label: false
+              label: "Sealed By: "
+              value: "Ministry of Communications"
+            signing_date:
+              include_label: true
+              label: "Sealed Date: "
+              value: "yyyy.MM.dd HH:mm:ss ZZ"
+            reason:
+              include_label: true
+              label: "Reason: "
+              value: "Officially sealed document"
+            text_background_color: { r: 255, g: 255, b: 255, a: 0.5 }
+            text_font:
+              name: "Helvetica"
+              size: 6
+              color: { r: 0, g: 0, b: 0, a: 1.0 }
+            signature_field:
+              field_id: ""
+              page_no: 1
+              x: 10
+              y: 650
+              width: 240
+              height: 90
+            # A path relative to store-path, read once at start-up.
+            company_logo:
+              value: "images/company-seal.png"
+
+          # --- Natural person --------------------------------------
+          - template_id: default_signature_appearance
+            name: Natural person signature
+            enabled: true
+            signature_text_position: BOTTOM
+            signed_by:
+              include_label: true
+              label: "Signed By: "
+            signing_date:
+              include_label: true
+              label: "Signed Date: "
+              value: "yyyy.MM.dd HH:mm:ss ZZ"
+            reason:
+              include_label: true
+              label: "Reason: "
+            location:
+              include_label: true
+              label: "Location: "
+            text_font:
+              name: "Helvetica"
+              size: 6
+              color: { r: 0, g: 0, b: 0, a: 1.0 }
+            signature_field:
+              page_no: 1
+              x: 200
+              y: 450
+              width: 200
+              height: 80
+
+  # ------------------------------------------------------------------
+  # Request guard rails
+  # ------------------------------------------------------------------
+  limits:
+    max-files-per-request: 20
+    max-file-size-bytes: 26214400      # 25 MB per document
+    max-total-request-bytes: 104857600 # 100 MB per request
+    max-concurrent-signing-requests: 8
+
+  # ------------------------------------------------------------------
+  # Signing identities. The key is the signer_id callers send; wrap it in
+  # brackets if it contains a dot, e.g. "[john.doe]".
+  # ------------------------------------------------------------------
+  signers:
+
+    # --- Organisation e-seal: unattended, no human approval ---------
+    ministry_eseal:
+      enabled: true
+      type: ESEAL
+      display-name: Ministry of Communications
+      profile-id: adss:signing:profile:001
+      certificate-alias: ${ESEAL_CERT_ALIAS:ministry_eseal_certificate}
+      credential-password: ${ESEAL_CREDENTIAL_PASSWORD:}
+      require-pin: false
+      overrides:
+        appearance-template: eseal_signature_appearance
+        signed-by: Ministry of Communications
+        signing-reason: Officially sealed document
+        signing-location: Baghdad, Iraq
+        contact-info: info@twokeyok.iq
+        # A seal is an organisational statement: callers may not reword it.
+        allow-request-appearance: false
+        allow-request-appearance-template: false
+
+    # --- Natural person: remote authorised signing ------------------
+    "[john.doe]":
+      enabled: true
+      type: NATURAL_PERSON
+      display-name: John Doe
+      profile-id: adss:signing:profile:001
+      credential-id: johnDoe
+      user-id: john.doe
+      # No credential-password on purpose: the PIN arrives with each request
+      # and is never written to disk, to the logs or to the audit trail.
+      require-pin: true
+      overrides:
+        appearance-template: default_signature_appearance
+        signer-role: Approver
+        signing-location: Baghdad, Iraq
+        allow-request-appearance: true
+        allow-request-appearance-template: true
+
+# ====================================================================
+# Who may call the orchestrator
+# ====================================================================
+csc-config:
+  require-authentication: true
+  cache-expiry: 60
+
+  csc-v1-info:
+    specs: 1.0.4.0
+    name: TwoKeyOk MiddleWare Orchestrator
+    region: IQ
+    description: Remote signing middleware over ADSS RAS/SAM
+
+  # Business applications using Basic base64(client_id:client_secret).
+  # secret-hash is preferred: generate one with
+  #   java -jar twokeyok-orchestrator.jar --hash-secret '<secret>'
+  registered-clients:
+    - client-id: hr_portal
+      display-name: HR Portal
+      secret-hash: ${HR_PORTAL_SECRET_HASH:}
+      authorities:
+        - ROLE_CLIENT_CREDENTIALS
+      default-signer-id: ministry_eseal
+      allowed-signer-ids:
+        - ministry_eseal
+      overrides:
+        allow-request-appearance: false
+        allow-request-container-type: false
+
+    - client-id: case_management
+      display-name: Case Management System
+      secret-hash: ${CASE_MGMT_SECRET_HASH:}
+      authorities:
+        - ROLE_CLIENT_CREDENTIALS
+      allowed-signer-ids:
+        - ministry_eseal
+        - "john.doe"
+
+  # End users presenting their own IAM access token as Bearer.
+  bearer:
+    enabled: ${ORCHESTRATOR_BEARER_ENABLED:false}
+    issuer: ${IAM_ISSUER:}
+    jwks-uri: ${IAM_JWKS_URI:}
+    audiences:
+      - twokeyok-orchestrator
+    signer-id-claim: preferred_username
+    credential-id-claim: credential_id
+    client-id-claim: azp
+    clock-skew-seconds: 60
+    jwks-cache-seconds: 300

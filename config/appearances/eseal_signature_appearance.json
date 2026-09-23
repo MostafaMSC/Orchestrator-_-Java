@@ -1,0 +1,57 @@
+{
+  "template_id": "eseal_signature_appearance",
+  "name": "Organisation e-seal appearance",
+  "description": "Electronic seal: organisation name, sealing date and reason next to the organisation logo. No handwritten signature.",
+  "width": 463,
+  "height": 180,
+  "border": {
+    "show": true,
+    "color": { "r": 0, "g": 0, "b": 0 }
+  },
+  "text_font": {
+    "name": "Arial",
+    "size": 16,
+    "color": { "r": 0, "g": 0, "b": 0 }
+  },
+  "signature_field": {
+    "x": 320,
+    "y": 40,
+    "width": 230,
+    "height": 90,
+    "page_no": 1
+  },
+  "fields": {
+    "signed_by": {
+      "include": true,
+      "label": "Sealed By",
+      "show_label": true,
+      "position": { "x": 14, "y": 8, "width": 260, "height": 18 }
+    },
+    "signing_date": {
+      "include": true,
+      "label": "Sealing Date",
+      "show_label": true,
+      "value": "dd MMM yyyy HH:mm:ss zz",
+      "position": { "x": 14, "y": 32, "width": 280, "height": 18 }
+    },
+    "reason": {
+      "include": true,
+      "label": "Reason",
+      "show_label": true,
+      "position": { "x": 14, "y": 56, "width": 260, "height": 18 }
+    },
+    "contact_info": {
+      "include": true,
+      "label": "Contact Info",
+      "show_label": true,
+      "position": { "x": 14, "y": 80, "width": 260, "height": 18 }
+    },
+    "company_logo": {
+      "include": true,
+      "label": "Company Logo",
+      "show_label": false,
+      "image_name": "organisation-seal.png",
+      "position": { "x": 300, "y": 20, "width": 150, "height": 140 }
+    }
+  }
+}

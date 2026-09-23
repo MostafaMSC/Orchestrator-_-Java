@@ -1,0 +1,48 @@
+[Unit]
+Description=TwoKeyOk MiddleWare Orchestrator (remote signing middleware)
+Documentation=https://api-middle.twokeyok.iq/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=twokeyok
+Group=twokeyok
+
+Environment="ORCHESTRATOR_CONFIG_DIR=/etc/twokeyok/orchestrator"
+Environment="LOG_DIR=/var/log/twokeyok-orchestrator"
+Environment="JAVA_OPTS=-Xms256m -Xmx1024m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom -Dfile.encoding=UTF-8"
+EnvironmentFile=-/etc/twokeyok/orchestrator/orchestrator.env
+
+WorkingDirectory=/opt/twokeyok/orchestrator
+ExecStart=/bin/sh -c '${JAVA_HOME:-/usr}/bin/java $JAVA_OPTS -jar /opt/twokeyok/orchestrator/twokeyok-orchestrator.jar'
+
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+
+# Binding to 443 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Hardening: the service only ever needs to read its config and write its logs.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/log/twokeyok-orchestrator
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=twokeyok-orchestrator
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

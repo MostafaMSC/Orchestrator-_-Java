@@ -1,0 +1,50 @@
+target/
+*.class
+
+# ---------------------------------------------------------------------------
+# Never commit real deployment settings or key material.
+# Templates are committed as *.example; the live files are created on the host.
+# ---------------------------------------------------------------------------
+*.env
+orchestrator.env
+!*.env.example
+
+# Key material, in any form.
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+*.key
+*.pem
+*.crt
+*.cer
+*.p10
+*.csr
+
+# Licensed Ascertia ADSS Client SDK — never redistribute it.
+# The build installs it into the local Maven repository from your own licensed
+# copy; see deploy/install-adss-sdk.sh. The SDK lives outside this repository,
+# so only the jar itself is listed here: a broader pattern such as "Docs/" also
+# matches this project's own docs/ on case-insensitive filesystems.
+adss_client_api.jar
+adss_client_samples.jar
+
+# Local overrides
+application-local.yml
+orchestrator-local.yml
+config/appearances/images/
+
+# End-to-end test output (may contain signed documents)
+e2e-out/
+
+logs/
+*.log
+
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+.DS_Store

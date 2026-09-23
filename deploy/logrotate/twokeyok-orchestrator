@@ -1,0 +1,27 @@
+# Logback already rolls and compresses these files; this entry is the safety net
+# that keeps the directory bounded if the service is stopped mid-roll.
+/var/log/twokeyok-orchestrator/orchestrator.log {
+    daily
+    rotate 30
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su twokeyok twokeyok
+    create 0640 twokeyok twokeyok
+}
+
+# The audit trail is signing evidence: keep it far longer and never truncate it
+# out from under the service.
+/var/log/twokeyok-orchestrator/audit.log {
+    monthly
+    rotate 24
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su twokeyok twokeyok
+    create 0640 twokeyok twokeyok
+}
