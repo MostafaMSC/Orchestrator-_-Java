@@ -28,7 +28,14 @@
 
         <!-- Versions below mirror the jars shipped in JAVAsdk/API/lib so the
              runtime behaviour matches the SDK's tested dependency set. -->
-        <adss.sdk.version>8.3.7</adss.sdk.version>
+        <!--
+            The ADSS Client SDK version installed in the local Maven repository.
+            8.1.0 is what the deployed ADSS hosts ship in
+            /appdata/ascertia/orchestrator*/lib/, and the build is verified
+            against it. Override for a different SDK without editing this file:
+              mvn -Dadss.sdk.version=8.3.7 clean package
+        -->
+        <adss.sdk.version>8.1.0</adss.sdk.version>
         <bouncycastle.version>1.78.1</bouncycastle.version>
         <pdfbox.version>2.0.26</pdfbox.version>
         <httpclient.version>4.5.13</httpclient.version>

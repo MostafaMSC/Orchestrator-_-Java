@@ -60,11 +60,26 @@ Requirements: **JDK 17 or 21**, **Maven 3.9+**, and the ADSS Client SDK.
 
 ```bash
 # 1. Install the licensed SDK jar into the local Maven repository (once).
-./deploy/install-adss-sdk.sh            # Windows: .\deploy\install-adss-sdk.ps1
+#    With no argument it searches the usual locations, including the deployed
+#    Ascertia installations under /appdata/ascertia. It reads the version from
+#    the jar's own manifest when the SDK ships no version file.
+./deploy/install-adss-sdk.sh                       # or pass a path:
+./deploy/install-adss-sdk.sh /appdata/ascertia/orchestrator
+./deploy/install-adss-sdk.sh /path/to/JAVAsdk      # Windows: .\deploy\install-adss-sdk.ps1
 
 # 2. Build.
 mvn -B clean package
 ```
+
+The build defaults to SDK **8.1.0**, the version shipped in the deployed ADSS
+installations. For a different SDK, point the build at it without editing
+anything:
+
+```bash
+mvn -B -Dadss.sdk.version=8.3.7 clean package
+```
+
+Both 8.1.0 and 8.3.7 compile and pass the full suite.
 
 The result is `target/twokeyok-orchestrator.jar`, a self-contained Spring Boot
 application.
