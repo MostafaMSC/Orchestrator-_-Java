@@ -110,7 +110,12 @@ CURL=(curl --silent --show-error --config "$CURL_CFG")
 # ====================================================================
 step "1/6  Preflight — ADSS endpoints, key material, effective profile"
 # ====================================================================
-if java -jar "$JAR" --check-adss | tee "$OUT_DIR/preflight.txt"; then
+# Scope the preflight to the signer under test, so an e-seal run is not blocked
+# by a RAS endpoint only a natural person would use.
+PREFLIGHT_ARGS=(--check-adss)
+[[ -n "$SIGNER_ID" ]] && PREFLIGHT_ARGS+=("--signer=$SIGNER_ID")
+
+if java -jar "$JAR" "${PREFLIGHT_ARGS[@]}" | tee "$OUT_DIR/preflight.txt"; then
   R_PRECHECK="PASS"; R_ADSS="PASS"; ok "preflight"
 else
   R_PRECHECK="FAIL"; R_ADSS="FAIL"

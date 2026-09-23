@@ -42,6 +42,8 @@ import iq.twokeyok.orchestrator.signing.PadesLevel;
 public class AdssConnectivityCheck implements ApplicationRunner {
 
     public static final String FLAG = "check-adss";
+    /** {@code --signer=<id>} limits the report to one configured identity. */
+    public static final String SIGNER_FLAG = "signer";
 
     private static final int TIMEOUT_MS = 5000;
     private static final String PASS = "PASS";
@@ -71,8 +73,18 @@ public class AdssConnectivityCheck implements ApplicationRunner {
             return;
         }
 
-        boolean longTerm = PadesLevel.toSdkType(properties.dss().signature().signatureLevel()) != null;
-        boolean hasNaturalPerson = properties.signers().values().stream()
+        // --signer=<id> scopes the report to one identity. Without it every
+        // configured signer counts, which would fail an e-seal check on a RAS
+        // endpoint only a natural person needs.
+        String scope = args.getOptionValues(SIGNER_FLAG) == null || args.getOptionValues(SIGNER_FLAG).isEmpty()
+                ? null : args.getOptionValues(SIGNER_FLAG).get(0);
+        Map<String, Signer> scoped = scopedSigners(scope);
+
+        boolean longTerm = scoped.values().stream()
+                .anyMatch(signer -> PadesLevel.toSdkType(effectiveLevel(signer)) != null)
+                || (scoped.isEmpty()
+                        && PadesLevel.toSdkType(properties.dss().signature().signatureLevel()) != null);
+        boolean hasNaturalPerson = scoped.values().stream()
                 .anyMatch(signer -> signer.type() == SignerType.NATURAL_PERSON);
 
         List<Check> checks = new ArrayList<>();
@@ -90,6 +102,11 @@ public class AdssConnectivityCheck implements ApplicationRunner {
         report.append(System.lineSeparator());
         report.append("ADSS PREFLIGHT").append(System.lineSeparator());
         report.append("==============").append(System.lineSeparator());
+        if (scope != null) {
+            report.append("  scoped to signer: ").append(scope)
+                    .append(scoped.isEmpty() ? "  (NOT CONFIGURED)" : "")
+                    .append(System.lineSeparator());
+        }
         report.append(System.lineSeparator());
 
         report.append(row("STATUS", "CHECK", "DETAIL"));
@@ -100,7 +117,7 @@ public class AdssConnectivityCheck implements ApplicationRunner {
         report.append(rule());
         report.append(System.lineSeparator());
 
-        appendSigningProfiles(report);
+        appendSigningProfiles(report, scoped);
         appendSignatureSettings(report, longTerm);
 
         boolean failed = checks.stream().anyMatch(Check::failed);
@@ -120,21 +137,40 @@ public class AdssConnectivityCheck implements ApplicationRunner {
     // ------------------------------------------------------------------
 
     /**
+     * The signers the report covers: one when {@code --signer} names it, every
+     * configured signer otherwise. An unknown name yields none, which the header
+     * states rather than silently widening the scope.
+     */
+    private Map<String, Signer> scopedSigners(String scope) {
+        if (scope == null) {
+            return properties.signers();
+        }
+        Signer signer = properties.signers().get(scope);
+        return signer == null ? Map.of() : Map.of(scope, signer);
+    }
+
+    /** A signer may override the signature level, which decides whether a TSA is needed. */
+    private String effectiveLevel(Signer signer) {
+        String override = signer.overrides() == null ? null : signer.overrides().signatureLevel();
+        return override != null ? override : properties.dss().signature().signatureLevel();
+    }
+
+    /**
      * The profile actually used per signer, after the signer entry falls back to
      * {@code signing.gateway.pdf_profile_id}. This is what ADSS will be asked for,
      * which is usually the first thing wrong on a new install.
      */
-    private void appendSigningProfiles(StringBuilder report) {
+    private void appendSigningProfiles(StringBuilder report, Map<String, Signer> signers) {
         report.append("EFFECTIVE SIGNING PROFILE").append(System.lineSeparator());
         report.append(rule());
         report.append(row("TYPE", "SIGNER", "PROFILE / CREDENTIAL"));
         report.append(rule());
 
         String gatewayDefault = properties.gateway().pdfProfileId();
-        if (properties.signers().isEmpty()) {
+        if (signers.isEmpty()) {
             report.append(row(SKIP, "(none configured)", "gateway default: " + orDash(gatewayDefault)));
         }
-        for (Map.Entry<String, Signer> entry : properties.signers().entrySet()) {
+        for (Map.Entry<String, Signer> entry : signers.entrySet()) {
             Signer signer = entry.getValue();
             String profile = firstNonBlank(signer.profileId(), gatewayDefault);
             String credential = firstNonBlank(signer.certificateAlias(), signer.credentialId());
