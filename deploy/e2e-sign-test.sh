@@ -71,6 +71,27 @@ finish() {
   exit "${1:-0}"
 }
 
+# ------------------------------------------------------------ environment ----
+# The service takes its settings from the systemd EnvironmentFile. A manual run
+# must load the same file, or the preflight reports the packaged defaults rather
+# than what the running service actually uses.
+#
+# Parsed rather than sourced: systemd treats the whole line after '=' as the
+# value, but `.` would word-split an unquoted JAVA_OPTS and try to run part of
+# it as a command.
+ENV_FILE="${ORCHESTRATOR_ENV_FILE:-/etc/twokeyok/orchestrator/orchestrator.env}"
+if [[ -r "$ENV_FILE" ]]; then
+  while IFS='=' read -r key value; do
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    value="${value%\"}"; value="${value#\"}"
+    value="${value%\'}"; value="${value#\'}"
+    export "$key=$value"
+  done < <(grep -vE '^[[:space:]]*(#|$)' "$ENV_FILE")
+  printf '  using environment from %s\n' "$ENV_FILE"
+else
+  printf '  no environment file at %s — using packaged defaults\n' "$ENV_FILE"
+fi
+
 # ---------------------------------------------------------------- inputs ----
 [[ -f "$JAR" ]] || { bad "jar not found: $JAR"; FAILED_STAGE="setup"; finish 1; }
 : "${ORCH_CLIENT_ID:?Set ORCH_CLIENT_ID to a registered client id}"
