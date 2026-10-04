@@ -84,15 +84,17 @@ public class AdssConnectivityCheck implements ApplicationRunner {
                 .anyMatch(signer -> PadesLevel.toSdkType(effectiveLevel(signer)) != null)
                 || (scoped.isEmpty()
                         && PadesLevel.toSdkType(properties.dss().signature().signatureLevel()) != null);
-        boolean hasNaturalPerson = scoped.values().stream()
-                .anyMatch(signer -> signer.type() == SignerType.NATURAL_PERSON);
 
         List<Check> checks = new ArrayList<>();
         checks.add(endpoint("Signing gateway", properties.gateway().url(), true));
         checks.add(endpoint("Verification", properties.verification().url(), longTerm));
         checks.add(endpoint("Timestamp (TSA)", properties.dss().tsa().url(), longTerm));
         checks.add(endpoint("OCSP", properties.dss().ocsp().url(), false));
-        checks.add(endpoint("RAS", properties.ras().url(), hasNaturalPerson));
+        // Informational only. This backend drives the SDK, which reaches RAS
+        // through the signing gateway — it never opens a connection to RAS
+        // itself, so RAS being unreachable from this host does not stop a
+        // natural-person signature.
+        checks.add(endpoint("RAS", properties.ras().url(), false));
         checks.add(file("Client keystore", properties.ras().keystorePath(),
                 properties.ras().keystorePassword(), false));
         checks.add(file("Truststore", properties.truststorePath(),
