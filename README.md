@@ -71,15 +71,32 @@ Requirements: **JDK 17 or 21**, **Maven 3.9+**, and the ADSS Client SDK.
 mvn -B clean package
 ```
 
-The build defaults to SDK **8.1.0**, the version shipped in the deployed ADSS
-installations. For a different SDK, point the build at it without editing
-anything:
+### SDK generations
+
+The SDK declares no dependencies of its own, so this build supplies them — and
+Ascertia migrated the whole XML stack from `javax.*` to `jakarta.*` between
+8.1.x and 8.3.x. The two are not interchangeable, so there is a profile for
+each:
+
+| Profile | SDK | XML stack |
+|---|---|---|
+| `sdk-javax` *(default)* | 8.1.x | `javax.xml.bind` (jakarta.xml.bind-api 2.3.3), xmlsec 2.x, jdom 1.x, javax.mail |
+| `sdk-jakarta` | 8.3.x | `jakarta.xml.bind` 4.x, xmlsec 3.x, jdom2, jakarta.mail |
 
 ```bash
-mvn -B -Dadss.sdk.version=8.3.7 clean package
+mvn -B clean package                                        # 8.1.x — deployed ADSS hosts
+mvn -B -Psdk-jakarta -Dadss.sdk.version=8.3.7 clean package # 8.3.x — JAVAsdk distribution
 ```
 
-Both 8.1.0 and 8.3.7 compile and pass the full suite.
+Getting this wrong does **not** fail the build: nothing in this project
+references JAXB directly, only the SDK's internals do. It fails at the first
+real signing request with
+`NoClassDefFoundError: javax/xml/bind/JAXBException`. If you see that, you are
+on the wrong profile for your SDK.
+
+Each profile's versions mirror the jars the corresponding Ascertia installation
+actually ships, so the runtime matches a set Ascertia has tested rather than the
+newest release of each library.
 
 The result is `target/twokeyok-orchestrator.jar`, a self-contained Spring Boot
 application.
