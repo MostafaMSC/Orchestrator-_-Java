@@ -46,10 +46,38 @@ public record SigningProperties(
         @DefaultValue Ras ras,
         @DefaultValue Dss dss,
         @DefaultValue Limits limits,
+        @DefaultValue DynamicSigner dynamicSigner,
         Map<String, Signer> signers) {
 
     public SigningProperties {
         signers = signers == null ? new LinkedHashMap<>() : signers;
+    }
+
+    /**
+     * Lets a caller name a signer that is not pre-registered in
+     * {@link #signers()}: {@code signer_id} becomes the ADSS user id,
+     * {@code credential_id} the certificate alias and {@code pin} the credential
+     * password, with the profile and policy still coming from configuration.
+     *
+     * <p>This is how the deployed Ascertia Orchestrator works — identity travels
+     * with the request — and it is the only workable model once there are more
+     * signers than anyone wants to list in a file. Pre-registered signers in
+     * {@link #signers()} still win, which is what pins an organisational e-seal
+     * to one certificate.</p>
+     */
+    public record DynamicSigner(
+            @DefaultValue("false") boolean enabled,
+            @DefaultValue("NATURAL_PERSON") SignerType type,
+            /** Falls back to {@code signing.gateway.pdf_profile_id}. */
+            String profileId,
+            @DefaultValue("true") boolean requirePin,
+            @DefaultValue SigningOverrides overrides) {
+
+        /** The synthetic entry for a signer named only by the request. */
+        public Signer asSigner(String signerId) {
+            return new Signer(true, type, signerId, profileId,
+                    null, null, signerId, null, requirePin, overrides);
+        }
     }
 
     /**

@@ -45,7 +45,12 @@ public class SignerResolver {
 
         Signer signer = properties.signers().get(signerId);
         if (signer == null) {
-            throw new OrchestratorException(ErrorCode.UNKNOWN_SIGNER, signerId);
+            // A signer named only by the request, when the deployment allows it.
+            // Pre-registered signers always win, so an e-seal stays pinned.
+            if (!properties.dynamicSigner().enabled()) {
+                throw new OrchestratorException(ErrorCode.UNKNOWN_SIGNER, signerId);
+            }
+            signer = properties.dynamicSigner().asSigner(signerId);
         }
         if (!signer.enabled()) {
             throw new OrchestratorException(ErrorCode.SIGNER_DISABLED, signerId);

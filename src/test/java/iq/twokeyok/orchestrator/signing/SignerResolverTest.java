@@ -43,6 +43,11 @@ class SignerResolverTest {
         config.put("csc-config.registered-clients[1].client-secret", "other");
         config.put("csc-config.registered-clients[1].allowed-signer-ids[0]", "john_doe");
 
+        // No allowed-signer-ids: this client may name any signer, which is what
+        // a dynamic signer needs. A client with an allow-list keeps it.
+        config.put("csc-config.registered-clients[2].client-id", "open_client");
+        config.put("csc-config.registered-clients[2].client-secret", "open");
+
         config.put("signing.signers.ministry_eseal.type", "ESEAL");
         config.put("signing.signers.ministry_eseal.profile-id", "adss:signing:profile:005");
         config.put("signing.signers.ministry_eseal.certificate-alias", "ministry_cert");
@@ -171,6 +176,56 @@ class SignerResolverTest {
                 .isInstanceOf(OrchestratorException.class)
                 .extracting(e -> ((OrchestratorException) e).errorCode())
                 .isEqualTo(ErrorCode.NO_SIGNER_CERTIFICATE);
+    }
+
+    @Test
+    void aDynamicSignerTakesItsIdentityFromTheRequest() {
+        config.put("signing.dynamic-signer.enabled", "true");
+        config.put("signing.dynamic-signer.type", "NATURAL_PERSON");
+
+        EffectiveSignerConfig resolved = resolver().resolve(
+                AuthenticatedCaller.client("open_client"), "someone@example.com", "cred-guid-123");
+
+        assertThat(resolved.signerId()).isEqualTo("someone@example.com");
+        assertThat(resolved.isNaturalPerson()).isTrue();
+        // user id and credential come from the request, profile from config
+        assertThat(resolved.userId()).isEqualTo("someone@example.com");
+        assertThat(resolved.certificateAlias()).isEqualTo("cred-guid-123");
+        assertThat(resolved.profileId()).isEqualTo("adss:signing:profile:001");
+    }
+
+    @Test
+    void aPreRegisteredSignerStillWinsOverTheDynamicTemplate() {
+        config.put("signing.dynamic-signer.enabled", "true");
+
+        EffectiveSignerConfig resolved = resolver().resolve(
+                AuthenticatedCaller.client("hr_portal"), "ministry_eseal", null);
+
+        // The e-seal stays pinned to its configured certificate.
+        assertThat(resolved.type()).isEqualTo(SignerType.ESEAL);
+        assertThat(resolved.certificateAlias()).isEqualTo("ministry_cert");
+        assertThat(resolved.userId()).isNull();
+    }
+
+    @Test
+    void anUnknownSignerIsStillRefusedWhenDynamicIsOff() {
+        assertThatThrownBy(() -> resolver().resolve(
+                AuthenticatedCaller.client("open_client"), "someone@example.com", "cred"))
+                .isInstanceOf(OrchestratorException.class)
+                .extracting(e -> ((OrchestratorException) e).errorCode())
+                .isEqualTo(ErrorCode.UNKNOWN_SIGNER);
+    }
+
+    @Test
+    void aClientAllowListStillAppliesToDynamicSigners() {
+        config.put("signing.dynamic-signer.enabled", "true");
+
+        // case_mgmt pins its signers, so it may not conjure a new one.
+        assertThatThrownBy(() -> resolver().resolve(
+                AuthenticatedCaller.client("case_mgmt"), "someone@example.com", "cred"))
+                .isInstanceOf(OrchestratorException.class)
+                .extracting(e -> ((OrchestratorException) e).errorCode())
+                .isEqualTo(ErrorCode.SIGNER_NOT_ALLOWED);
     }
 
     @Test
