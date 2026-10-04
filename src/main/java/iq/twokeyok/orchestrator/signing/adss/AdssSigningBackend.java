@@ -111,6 +111,12 @@ public class AdssSigningBackend implements SigningBackend {
         if (config.certificateAlias() != null && !config.certificateAlias().isBlank()) {
             request.setCertificateAlias(config.certificateAlias());
         }
+        // The SDK's PDF handling is delegated to iText, and which one must be
+        // stated: without this it reaches for iText 7 and dies with
+        // NoClassDefFoundError com/itextpdf/forms/fields/PdfFormField.
+        request.setITextVersion("7".equals(properties.dss().signature().itextVersion())
+                ? PdfSigningRequest.ITEXT_VERSION_7
+                : PdfSigningRequest.ITEXT_VERSION_2);
         request.setLocalHash(config.localHash());
         request.setSignatureHash(config.computeHash());
         request.setHashAlgorithm(config.hashAlgorithm());

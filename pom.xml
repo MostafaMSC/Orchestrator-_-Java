@@ -64,6 +64,8 @@
         <json-simple.version>1.1.1</json-simple.version>
         <nimbus.version>9.40</nimbus.version>
         <jasypt.version>3.0.5</jasypt.version>
+        <itext2.version>2.1.7</itext2.version>
+        <itext7.version>7.2.5</itext7.version>
 
         <!-- Defaults are the sdk-javax (8.1.x) set; sdk-jakarta overrides them. -->
         <bouncycastle.version>1.72</bouncycastle.version>
@@ -215,6 +217,42 @@
             <version>${gson.version}</version>
         </dependency>
 
+        <!--
+            The SDK delegates its PDF work to iText and ships neither one, so
+            the first real signing request fails with NoClassDefFoundError
+            unless one is supplied.
+
+            iText 2 (com.lowagie) is MPL 1.1 / LGPL and can be redistributed in
+            a proprietary product; the SDK's own lib directory ships that
+            licence as mpl.license. iText 7 (com.itextpdf) is AGPL and needs a
+            commercial licence to ship — it is available behind -Pitext7, with
+            signing.dss.signature.itext_version set to 7.
+        -->
+        <dependency>
+            <groupId>com.lowagie</groupId>
+            <artifactId>itext</artifactId>
+            <version>${itext2.version}</version>
+            <exclusions>
+                <!-- Pulled in for barcode and encryption extras we never use. -->
+                <exclusion>
+                    <groupId>bouncycastle</groupId>
+                    <artifactId>bcmail-jdk14</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>bouncycastle</groupId>
+                    <artifactId>bcprov-jdk14</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.bouncycastle</groupId>
+                    <artifactId>bcmail-jdk14</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.bouncycastle</groupId>
+                    <artifactId>bcprov-jdk14</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
         <!-- The SDK logs through Log4j2 / commons-logging; route both into the
              Spring Boot Logback pipeline instead of adding a second binding. -->
         <dependency>
@@ -235,6 +273,28 @@
     </dependencies>
 
     <profiles>
+        <!--
+            iText 7 for the SDK's PDF handling, instead of the default iText 2.
+            AGPL: shipping this inside a proprietary product needs a commercial
+            licence from the iText vendor. Pair it with
+            signing.dss.signature.itext_version: 7
+        -->
+        <profile>
+            <id>itext7</id>
+            <dependencies>
+                <dependency>
+                    <groupId>com.itextpdf</groupId>
+                    <artifactId>forms</artifactId>
+                    <version>${itext7.version}</version>
+                </dependency>
+                <dependency>
+                    <groupId>com.itextpdf</groupId>
+                    <artifactId>sign</artifactId>
+                    <version>${itext7.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
+
         <!--
             SDK 8.1.x — the generation deployed on the ADSS hosts.
             jakarta.xml.bind-api 2.3.3 is the renamed artifact that still
