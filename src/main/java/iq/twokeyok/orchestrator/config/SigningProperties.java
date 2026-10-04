@@ -161,16 +161,6 @@ public record SigningProperties(
             @DefaultValue("1") int signingPage,
             @DefaultValue("NONE") String containerType,
             @DefaultValue("Please authorise this signing transaction") String dataToBeDisplayed,
-            /**
-             * Which iText the SDK uses for its PDF work: {@code 2} or {@code 7}.
-             *
-             * <p>Defaults to 2. iText 7 ({@code com.itextpdf}) is AGPL and needs a
-             * commercial licence to ship inside a proprietary product; iText 2
-             * ({@code com.lowagie}) is MPL/LGPL, and its licence is the
-             * {@code mpl.license} file shipped in the SDK's own lib directory.
-             * Build with {@code -Pitext7} to put iText 7 on the classpath.</p>
-             */
-            @DefaultValue("2") String itextVersion,
             @DefaultValue Appearance appearance) {
     }
 
