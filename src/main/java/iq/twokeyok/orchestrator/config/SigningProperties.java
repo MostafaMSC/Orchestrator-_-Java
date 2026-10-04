@@ -141,10 +141,24 @@ public record SigningProperties(
             @DefaultValue("true") boolean enabled,
             /** Fall back to the first enabled template when a request names none. */
             @DefaultValue("true") boolean useDefault,
+            /**
+             * Name of an appearance defined <em>inside ADSS</em>, e.g.
+             * {@code default_sig_appearance}. When set, the orchestrator sends that
+             * name instead of an inline appearance document and lets the signing
+             * service render it — which is what an ADSS profile configured with its
+             * own appearances expects. Inline templates below are then unused for
+             * drawing, though their text values still populate the signature.
+             */
+            String serverSideId,
             /** Optional directory of JSON templates, merged with the ones defined here. */
             String storePath,
             @DefaultValue("false") boolean reloadAlways,
             List<AppearanceTemplateConfig> appearances) {
+
+        /** {@code true} when ADSS owns the appearance and we only name it. */
+        public boolean useServerSide() {
+            return serverSideId != null && !serverSideId.isBlank();
+        }
 
         public Appearance {
             appearances = appearances == null ? new ArrayList<>() : appearances;

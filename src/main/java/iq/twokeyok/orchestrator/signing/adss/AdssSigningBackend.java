@@ -148,14 +148,27 @@ public class AdssSigningBackend implements SigningBackend {
         }
     }
 
-    private static void applyAppearance(PdfSigningRequest request,
-                                        ResolvedAppearance appearance,
-                                        EffectiveSignerConfig config) {
+    private void applyAppearance(PdfSigningRequest request,
+                                 ResolvedAppearance appearance,
+                                 EffectiveSignerConfig config) {
+        // An ADSS profile may own its appearances, in which case the request
+        // names one and ADSS renders it. Sending an inline appearance document
+        // as well is not additive — the two are alternatives.
+        String serverSideId = properties.dss().signature().appearance().serverSideId();
+        boolean serverSide = properties.dss().signature().appearance().useServerSide();
+
         if (appearance == null) {
             request.setSigningPage(config.signingPage());
+            if (serverSide) {
+                request.setSignatureAppearanceId(serverSideId);
+            }
             return;
         }
-        request.setSignatureAppearance(appearance.appearanceXml());
+        if (serverSide) {
+            request.setSignatureAppearanceId(serverSideId);
+        } else {
+            request.setSignatureAppearance(appearance.appearanceXml());
+        }
 
         setIfPresent(appearance.signedBy(), request::setSignedBy);
         setIfPresent(appearance.reason(), request::setSigningReason);
@@ -181,8 +194,11 @@ public class AdssSigningBackend implements SigningBackend {
                 request.addEmptySignatureFieldPosition(box.x(), box.y(), box.x2(), box.y2(),
                         page, config.signatureFieldName());
             } else {
+                // The last argument is the ADSS-side appearance name. A working
+                // integration against this platform passes a real name here;
+                // null is only correct when an inline appearance is supplied.
                 request.addSignaturePosition(box.x(), box.y(), box.x2(), box.y2(),
-                        page, config.signatureFieldName(), null);
+                        page, config.signatureFieldName(), serverSide ? serverSideId : null);
             }
         }
     }
