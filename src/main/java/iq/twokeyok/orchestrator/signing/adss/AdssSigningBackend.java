@@ -75,6 +75,16 @@ public class AdssSigningBackend implements SigningBackend {
             log.error("[{}] ADSS at {} is not reachable: {}", job.requestId(), gateway.url(), e.getMessage());
             throw new OrchestratorException(ErrorCode.ADSS_UNAVAILABLE, e);
         } catch (Exception e) {
+            // An error status from ADSS is not an orchestrator fault, and
+            // reporting it as 1001 sends operators hunting in the wrong place.
+            String upstream = upstreamHttpError(e);
+            if (upstream != null) {
+                log.error("[{}] ADSS returned an error for signer={} profile={} credential={}: {}",
+                        job.requestId(), config.signerId(), config.profileId(),
+                        config.certificateAlias() == null ? "<profile default>" : config.certificateAlias(),
+                        upstream, e);
+                throw new OrchestratorException(ErrorCode.ADSS_REJECTED, e, upstream);
+            }
             log.error("[{}] PAdES signing failed", job.requestId(), e);
             throw new OrchestratorException(ErrorCode.INTERNAL_ERROR, e);
         }
@@ -280,6 +290,23 @@ public class AdssSigningBackend implements SigningBackend {
             result.add(new SignedDocument(name, (byte[]) signed.get(i)));
         }
         return new SignResult(result, transactionId);
+    }
+
+    /**
+     * The SDK reports an error status from ADSS as a plain {@link java.io.IOException}
+     * carrying only "Server returned HTTP response code: NNN for URL: …" — the
+     * response body, which holds the ADSS diagnostic, is discarded before it
+     * reaches us. Finding that message in the cause chain is enough to tell an
+     * upstream rejection apart from a fault in this service.
+     */
+    private static String upstreamHttpError(Throwable throwable) {
+        for (Throwable t = throwable; t != null && t != t.getCause(); t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null && message.contains("Server returned HTTP response code")) {
+                return message;
+            }
+        }
+        return null;
     }
 
     private static String describe(int errorCode, String errorMessage) {
