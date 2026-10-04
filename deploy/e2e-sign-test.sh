@@ -28,6 +28,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --signer)     SIGNER_ID="$2"; shift 2 ;;
     --pin)        PIN="$2"; shift 2 ;;
+    --pin-file)        SIGNER_PIN_FILE="$2"; shift 2 ;;
+    --secret-file)     ORCH_CLIENT_SECRET_FILE="$2"; shift 2 ;;
+    --config-dir)      ORCHESTRATOR_CONFIG_DIR="$2"; shift 2 ;;
     --base-url)   BASE_URL="$2"; shift 2 ;;
     --jar)        JAR="$2"; shift 2 ;;
     --out)        OUT_DIR="$2"; shift 2 ;;
@@ -90,6 +93,26 @@ if [[ -r "$ENV_FILE" ]]; then
   printf '  using environment from %s\n' "$ENV_FILE"
 else
   printf '  no environment file at %s — using packaged defaults\n' "$ENV_FILE"
+fi
+
+# The systemd unit sets ORCHESTRATOR_CONFIG_DIR, not the EnvironmentFile, so a
+# standalone preflight would otherwise fall back to ./config and report a
+# configuration the running service is not using — profile, hash algorithm and
+# signers all read from the wrong file.
+export ORCHESTRATOR_CONFIG_DIR="${ORCHESTRATOR_CONFIG_DIR:-/etc/twokeyok/orchestrator}"
+printf '  using configuration from %s\n' "$ORCHESTRATOR_CONFIG_DIR"
+
+# A secret typed at a prompt is invisible, and a pasted one picks up the
+# terminal's bracketed-paste escapes. Reading it from a mode-0600 file keeps it
+# out of the shell history, out of `ps`, and out of the terminal entirely.
+if [[ -z "${ORCH_CLIENT_SECRET:-}" && -n "${ORCH_CLIENT_SECRET_FILE:-}" ]]; then
+  [[ -r "$ORCH_CLIENT_SECRET_FILE" ]] || { bad "cannot read $ORCH_CLIENT_SECRET_FILE"; exit 1; }
+  ORCH_CLIENT_SECRET="$(tr -d '\r\n' < "$ORCH_CLIENT_SECRET_FILE")"
+  export ORCH_CLIENT_SECRET
+fi
+if [[ -z "$PIN" && -n "${SIGNER_PIN_FILE:-}" ]]; then
+  [[ -r "$SIGNER_PIN_FILE" ]] || { bad "cannot read $SIGNER_PIN_FILE"; exit 1; }
+  PIN="$(tr -d '\r\n' < "$SIGNER_PIN_FILE")"
 fi
 
 # ---------------------------------------------------------------- inputs ----
