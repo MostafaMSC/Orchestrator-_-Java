@@ -1,0 +1,93 @@
+#
+# The shape of the staging deployment that produced local_hash=true at runtime
+# while this file says false. Secrets replaced; the structure is what matters.
+#
+signing:
+  description: Signing Module to integrate Ascertia's Remote Authorization Solution
+  debug-mode: false
+  basic-auth-type: implicit
+  default_credential_strategy: "LATEST"
+  truststore_path: /etc/twokeyok/orchestrator/tls/adss-truststore.jks
+  truststore_password: redacted
+
+  gateway:
+    url: http://adss.example:8777/adss/signing/hdsi
+    client_id: Orchestrator-Signing
+    pdf_profile_id: adss:signing:profile:001
+    request_mode: HTTP
+    timeout_ms: 300000
+    retries: 1
+    status_polling:
+      interval_ms: 3000
+      max_attempts: 60
+
+  verification:
+    request_mode: 2
+    url: http://verify.example/adss/verification/dss
+    client_id: 'Orchestrator-Verify'
+    profile_id: adss:verification:profile:001
+
+  ras:
+    url: https://ras.example
+    client_id: orchestrator
+    client_secret: redacted
+    profile_id: adss:ras:profile:005
+    device_id: SIGNING_ORCHESTRATOR_DEVICE
+    keystore_type: PKCS12
+    keystore_path:
+    keystore_password: redacted
+
+  dss:
+    tsa:
+      url: https://tsa.example:8778/adss/tsa
+      policy_id: '2.16.368.1.2.1.6'
+    ocsp:
+      url: "http://ocsp.example/adss/ocsp"
+      hash_algorithm: SHA1
+
+    signature:
+      compute_hash: true
+      local_hash: false
+      hash_algorithm: SHA384
+      dictionary_size: 12000
+      signature_level: PAdES_BASELINE_LTA
+      container_type: NONE
+      signing_page: 1
+      data_to_be_displayed: Orchestrator-Required-Document-Authorization
+      appearance:
+        enabled: false
+        use_default: true
+
+  limits:
+    max-files-per-request: 20
+    max-file-size-bytes: 26214400
+    max-total-request-bytes: 104857600
+    max-concurrent-signing-requests: 8
+
+  dynamic-signer:
+    enabled: false
+
+  signers:
+    techsource_eseal:
+      enabled: true
+      type: ESEAL
+      display-name: TechSource Staging e-Seal
+      profile-id: adss:signing:profile:001
+      require-pin: false
+
+csc-config:
+  require-authentication: true
+  cache-expiry: 60
+
+  registered-clients:
+    - client-id: hr_portal
+      display-name: HR Portal
+      client-secret: redacted
+      authorities:
+        - ROLE_CLIENT_CREDENTIALS
+      default-signer-id: techsource_eseal
+      allowed-signer-ids:
+        - techsource_eseal
+
+  bearer:
+    enabled: false
