@@ -341,9 +341,10 @@ public class AdssSigningBackend implements SigningBackend {
             // orchestrator fault sent a day of debugging in the wrong direction.
             if (message.contains("ASC_SOAPEnvelope.getBody()")) {
                 return "ADSS answered without a SOAP body, which is what it does when the failure is in the "
-                        + "response headers instead - RESPONSE_STATUS / ERROR_CODE / MESSAGE. A stopped "
-                        + "Signing Service (ADSS error 41003) looks exactly like this. Check the service is "
-                        + "running and read the headers with: tcpdump -A -s0 'port <gateway port>'";
+                        + "response headers instead - RESPONSE_STATUS / ERROR_CODE / MESSAGE. Seen as 41003, "
+                        + "the Signing Service is stopped, and 41004, an internal ADSS error detailed only in "
+                        + "its own debug log. Read the headers off the wire: tcpdump over plaintext, or "
+                        + "deploy/tls-relay.py over TLS. See docs/TROUBLESHOOTING.md";
             }
         }
         return null;
