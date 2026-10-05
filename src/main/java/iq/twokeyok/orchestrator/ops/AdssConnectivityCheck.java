@@ -111,6 +111,13 @@ public class AdssConnectivityCheck implements ApplicationRunner {
         report.append(System.lineSeparator());
         report.append("ADSS PREFLIGHT").append(System.lineSeparator());
         report.append("==============").append(System.lineSeparator());
+        // Without ORCHESTRATOR_CONFIG_DIR this reads ./config, or the defaults
+        // packaged in the jar, and then reports on a deployment nobody is
+        // running. Naming the source makes that obvious at a glance.
+        String configDir = System.getenv("ORCHESTRATOR_CONFIG_DIR");
+        report.append("  configuration: ")
+                .append(configDir == null ? "./config (ORCHESTRATOR_CONFIG_DIR not set)" : configDir)
+                .append(System.lineSeparator());
         if (scope != null) {
             report.append("  scoped to signer: ").append(scope)
                     .append(scoped.isEmpty() ? "  (NOT CONFIGURED)" : "")
