@@ -87,8 +87,14 @@ public class AdssConnectivityCheck implements ApplicationRunner {
 
         List<Check> checks = new ArrayList<>();
         checks.add(endpoint("Signing gateway", properties.gateway().url(), true));
-        checks.add(endpoint("Verification", properties.verification().url(), longTerm));
-        checks.add(endpoint("Timestamp (TSA)", properties.dss().tsa().url(), longTerm));
+        // Reported, never required. These are addresses handed to ADSS, through
+        // setVerificationServiceAddress and setTimeStampServiceAddress, and ADSS
+        // reaches them from its own network. A timeout here usually means a
+        // wrong URL and is worth seeing, but a verification service firewalled
+        // off from this host can be perfectly reachable from ADSS, so it is no
+        // reason to refuse to sign.
+        checks.add(endpoint("Verification", properties.verification().url(), false));
+        checks.add(endpoint("Timestamp (TSA)", properties.dss().tsa().url(), false));
         checks.add(endpoint("OCSP", properties.dss().ocsp().url(), false));
         // Informational only. This backend drives the SDK, which reaches RAS
         // through the signing gateway — it never opens a connection to RAS
