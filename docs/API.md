@@ -8,12 +8,33 @@ marked **(orchestrator extension)**.
 
 ## Authentication
 
-Both schemes of the guide are accepted on every endpoint.
+Every endpoint accepts all three schemes. What `Basic` **means** is set by
+`signing.basic_auth_type`.
 
-| Scheme | Header | Who it identifies |
-|---|---|---|
-| Client credentials | `Authorization: Basic base64(client_id:client_secret)` | a business application; it must say which signer it acts for |
-| Signer access token | `Authorization: Bearer <access-token>` | the signer; the identity comes from the token |
+| Scheme | `basic_auth_type` | Header | Who it identifies |
+|---|---|---|---|
+| Implicit | `implicit` (default) | `Authorization: Basic base64(signer_id:credential_password)` | the signer; no `signer_id` or `pin` field is needed |
+| Client credentials | `client_credentials` | `Authorization: Basic base64(client_id:client_secret)` | a business application; it must say which signer it acts for |
+| Signer access token | either | `Authorization: Bearer <access-token>` | the signer; the identity comes from the token |
+
+`implicit` is the scheme the deployed Ascertia Orchestrator uses, so a caller
+written against that API works here unchanged:
+
+```bash
+curl -X POST https://<host>/orchestrator/service/sign \
+  -H 'Authorization: Basic base64(signer@example.com:password)' \
+  -F 'input_files=@document.pdf' \
+  -F 'signature_appearance={"template_id":"my_template"};type=application/json'
+```
+
+The Basic password becomes the credential password sent to ADSS. A `pin` field,
+if present, takes precedence over it. Because the signer is not named in
+configuration, `implicit` normally runs with `signing.dynamic-signer.enabled:
+true` so the identity in the header resolves; a signer listed under
+`signing.signers` still wins and keeps its configured profile and credential.
+
+Under `client_credentials` the registered clients in `csc-config` are
+authenticated instead, and `allowed-signer-ids` applies as usual.
 
 A bearer token is validated against the JWKS of the customer IAM (issuer,
 audience, signature and expiry). The signer identity is read from the claim named

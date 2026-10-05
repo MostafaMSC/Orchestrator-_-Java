@@ -43,6 +43,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "ORCHESTRATOR_CONFIG_DIR=target/no-such-config-dir",
         // Bundled templates only, so the test does not depend on a config directory.
         "signing.dss.signature.appearance.store-path=target/no-such-appearance-dir",
+        // These tests exercise the client-credentials scheme: Basic carries an
+        // application's id and secret, and the request names the signer. The
+        // implicit scheme, where Basic carries the signer's own id and password,
+        // has its own test class.
+        "signing.basic-auth-type=client_credentials",
         "signing.gateway.client_id=Orchestrator-Signing",
         "signing.gateway.pdf_profile_id=adss:signing:profile:001",
         "signing.dss.signature.hash_algorithm=SHA384",

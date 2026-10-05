@@ -18,14 +18,25 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import iq.twokeyok.orchestrator.config.CscProperties;
+import iq.twokeyok.orchestrator.config.SigningProperties;
 import iq.twokeyok.orchestrator.error.ErrorCode;
 import iq.twokeyok.orchestrator.error.OrchestratorException;
 import iq.twokeyok.orchestrator.web.dto.ErrorResponse;
 
 /**
- * Accepts the two authorization schemes of the TwoKeyOk MiddleWare surface:
- * {@code Bearer <signer-access-token>} and
- * {@code Basic base64(clientId:clientSecret)}.
+ * Accepts the authorization schemes of the TwoKeyOk MiddleWare surface:
+ * {@code Bearer <signer-access-token>}, and {@code Basic}, whose meaning is set
+ * by {@code signing.basic_auth_type}:
+ *
+ * <ul>
+ *   <li>{@code implicit} (the default, and what the deployed Ascertia
+ *       Orchestrator uses) — {@code Basic base64(signerId:credentialPassword)}.
+ *       The signer and their password both arrive in the header, so a request
+ *       needs no {@code signer_id} or {@code pin} field.</li>
+ *   <li>{@code client_credentials} — {@code Basic base64(clientId:clientSecret)}
+ *       for a business application acting for a signer it names in the
+ *       request.</li>
+ * </ul>
  *
  * <p>Actuator endpoints are left alone so a load balancer can probe the service
  * without credentials.</p>
@@ -38,15 +49,18 @@ public class CallerAuthenticationFilter extends OncePerRequestFilter {
     private final ClientRegistry clientRegistry;
     private final BearerTokenVerifier bearerTokenVerifier;
     private final CscProperties properties;
+    private final SigningProperties signingProperties;
     private final ObjectMapper objectMapper;
 
     public CallerAuthenticationFilter(ClientRegistry clientRegistry,
                                       BearerTokenVerifier bearerTokenVerifier,
                                       CscProperties properties,
+                                      SigningProperties signingProperties,
                                       ObjectMapper objectMapper) {
         this.clientRegistry = clientRegistry;
         this.bearerTokenVerifier = bearerTokenVerifier;
         this.properties = properties;
+        this.signingProperties = signingProperties;
         this.objectMapper = objectMapper;
     }
 
@@ -108,10 +122,26 @@ public class CallerAuthenticationFilter extends OncePerRequestFilter {
         if (separator < 0) {
             throw new OrchestratorException(ErrorCode.INVALID_CLIENT_CREDENTIALS);
         }
-        String clientId = decoded.substring(0, separator);
-        String clientSecret = decoded.substring(separator + 1);
-        clientRegistry.authenticate(clientId, clientSecret);
-        return AuthenticatedCaller.client(clientId);
+        String user = decoded.substring(0, separator);
+        String password = decoded.substring(separator + 1);
+
+        // signing.basic_auth_type decides what those two values mean. The
+        // deployed Ascertia Orchestrator runs 'implicit', where the Basic
+        // credentials are the signer's own id and credential password rather
+        // than an application's client id and secret - so a caller written
+        // against that API works here without changing its request.
+        if (implicitBasicAuth()) {
+            if (user.isBlank() || password.isBlank()) {
+                throw new OrchestratorException(ErrorCode.INVALID_CLIENT_CREDENTIALS);
+            }
+            return AuthenticatedCaller.implicitSigner(user, password);
+        }
+        clientRegistry.authenticate(user, password);
+        return AuthenticatedCaller.client(user);
+    }
+
+    private boolean implicitBasicAuth() {
+        return "implicit".equalsIgnoreCase(signingProperties.basicAuthType());
     }
 
     private void writeError(HttpServletResponse response, OrchestratorException e) throws IOException {

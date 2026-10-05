@@ -93,7 +93,7 @@ public class SigningOrchestrationService {
 
         EffectiveSignerConfig config = signerResolver.resolve(
                 caller, command.signerId(), command.credentialId());
-        config = applyRequestOverrides(config, command);
+        config = applyRequestOverrides(config, command, caller);
 
         ResolvedAppearance appearance = appearanceService.resolve(
                 config.appearanceTemplate(),
@@ -212,11 +212,18 @@ public class SigningOrchestrationService {
     // Request level overrides
     // ------------------------------------------------------------------
 
-    private EffectiveSignerConfig applyRequestOverrides(EffectiveSignerConfig config, SignCommand command) {
+    private EffectiveSignerConfig applyRequestOverrides(EffectiveSignerConfig config,
+                                                        SignCommand command,
+                                                        AuthenticatedCaller caller) {
         EffectiveSignerConfig result = config;
 
         if (command.pin() != null && !command.pin().isBlank()) {
             result = result.withCredentialPassword(command.pin());
+        } else if (caller.hasCredentialPassword()) {
+            // Implicit Basic auth: the password came in the authorization header
+            // rather than as a form field, which is how the Ascertia Orchestrator
+            // API is called.
+            result = result.withCredentialPassword(caller.credentialPassword());
         } else if (result.isNaturalPerson()
                 && (result.credentialPassword() == null || result.credentialPassword().isBlank())
                 && requiresPin(result.signerId())) {

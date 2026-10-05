@@ -94,6 +94,7 @@ quietly ignored.
 | `truststore_path` / `truststore_password` | — | Trust for the ADSS server certificates. JKS or PKCS12. |
 | `dss.tsa.url` / `policy_id` | — | Required for LT/LTA. |
 | `default_credential_strategy` | `LATEST` | See below. |
+| `basic_auth_type` | `implicit` | What `Authorization: Basic` carries. `implicit` — the signer's own id and credential password, as the Ascertia Orchestrator expects. `client_credentials` — an application's client id and secret from `csc-config.registered-clients`. See docs/API.md. |
 | `debug-mode` | `false` | Turns on verbose SDK HTTP logging. Never in production. |
 
 > `status_polling` is the first thing to tune in production. A signing call holds
