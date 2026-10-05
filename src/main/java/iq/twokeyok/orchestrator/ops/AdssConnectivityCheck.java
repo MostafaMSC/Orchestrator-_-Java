@@ -251,7 +251,15 @@ public class AdssConnectivityCheck implements ApplicationRunner {
         }
     }
 
-    /** Reports whether key material exists and is readable — never its password. */
+    /**
+     * Reports whether key material exists and is readable — never its password.
+     *
+     * <p>Readability is reported for whoever runs the preflight, which is usually
+     * root, while the service runs as its own account. A root-readable file can
+     * still be unreadable to the service, so the owner and mode are printed too:
+     * that is the difference between a PASS here and a
+     * {@code FileNotFoundException (Permission denied)} at the first signature.</p>
+     */
     private static Check file(String name, String path, String password, boolean required) {
         if (isBlank(path)) {
             return new Check(required ? FAIL : SKIP, name, "not configured", required);
@@ -265,7 +273,21 @@ public class AdssConnectivityCheck implements ApplicationRunner {
             return new Check(FAIL, name,
                     "unreadable by this user: " + file.toAbsolutePath() + " (check owner and mode)", true);
         }
-        return new Check(PASS, name, file.toAbsolutePath() + passwordNote, required);
+        return new Check(PASS, name, file.toAbsolutePath() + passwordNote + ownership(file), required);
+    }
+
+    /** {@code owner:group mode} so a mismatch with the service account is visible. */
+    private static String ownership(Path file) {
+        try {
+            java.nio.file.attribute.PosixFileAttributes attributes = Files.readAttributes(
+                    file, java.nio.file.attribute.PosixFileAttributes.class);
+            return "  [%s:%s %s]".formatted(
+                    attributes.owner().getName(),
+                    attributes.group().getName(),
+                    java.nio.file.attribute.PosixFilePermissions.toString(attributes.permissions()));
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     // ------------------------------------------------------------------
