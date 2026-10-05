@@ -119,8 +119,20 @@ request is refused with `1029`.
 |---|---|---|
 | `hash_algorithm` | `SHA256` | `SHA1`, `SHA224`, `SHA256`, `SHA384`, `SHA512`, `SHA3-224/256/384/512`. |
 | `dictionary_size` | `12000` | Raise for long certificate chains or LTV data. |
-| `compute_hash` | `true` | Ask ADSS to compute the final hash at signing time. |
-| `local_hash` | `false` | Hash the PDF here and send only the digest. Use when documents must not leave the network. |
+| `compute_hash` | `true` | Ask ADSS to return the document hash with the signature (`setSignatureHash`). Does not move hashing into this process. |
+| `local_hash` | `false` | Hash the PDF here and send only the digest. Use when documents must not leave the network. **Requires the document to already contain the empty signature field named by `signature_field_name`** — see the note below. |
+
+> **`local_hash: true` needs a signature field that already exists.**
+> The SDK hashes the byte range around the field named by `signature_field_name`,
+> so on a document that has no such field it fails with
+> `The signature field 'Signature1' does not exist` before any request is sent.
+> Either embed the empty field first, or leave `local_hash: false` and let ADSS
+> create the field and hash server side.
+>
+> `compute_hash` is unrelated to this, despite sharing a name with the Ascertia
+> Orchestrator's `compute_hash`. That product signs PDFs with the EU DSS library,
+> where the key means "hash at document signing time"; here it only asks ADSS to
+> hand the hash back.
 | `signature_level` | `PAdES_BASELINE_B` | ETSI spelling; mapped onto the SDK's PAdES types — see below. |
 | `signature_field_name` | `Signature1` | |
 | `signing_page` | `1` | Used when no appearance box says otherwise. |

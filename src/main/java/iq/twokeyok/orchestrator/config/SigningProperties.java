@@ -142,11 +142,28 @@ public record SigningProperties(
 
     /** Signature defaults — the lowest layer of the precedence chain. */
     public record Signature(
-            /** Ask ADSS to compute the final hash at signing time. */
+            /**
+             * Ask ADSS to return the document hash alongside the signature
+             * ({@code setSignatureHash}). It does not move any hashing work to
+             * this process; {@link #localHash()} is the switch that does.
+             *
+             * <p>Not the same switch as {@code compute_hash} in the Ascertia
+             * Orchestrator's configuration, which signs PDFs with the EU DSS
+             * library and means "hash at document signing time" there.</p>
+             */
             @DefaultValue("true") boolean computeHash,
             /**
-             * Hash the document inside the orchestrator and send only the digest.
-             * Use when documents must not leave the business network.
+             * Hash the PDF in this process and send only the digest
+             * ({@code setLocalHash}). Use when documents must not leave the
+             * business network.
+             *
+             * <p>Requires the document to <em>already contain</em> the empty
+             * signature field named by {@link #signatureFieldName()}. The SDK hashes
+             * the byte range around that field and throws
+             * {@code The signature field '…' does not exist} when it is absent, before
+             * any request is sent. Leave it {@code false} to let ADSS create the
+             * field and hash the document server side, which is what an ADSS signing
+             * profile carrying its own appearance expects.</p>
              */
             @DefaultValue("false") boolean localHash,
             @DefaultValue("SHA256") String hashAlgorithm,

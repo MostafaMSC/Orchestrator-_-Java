@@ -53,10 +53,17 @@ public class AdssSigningBackend implements SigningBackend {
         EffectiveSignerConfig config = job.config();
         try {
             PdfSigningRequest request = buildRequest(job);
-            log.info("[{}] Sending PAdES request to {}: signer={} type={} profile={} credential={} documents={}",
+            // The flags are logged because they decide, before anything leaves
+            // this process, whether the SDK hashes the PDF here - which needs
+            // the named signature field to already exist in the document.
+            log.info("[{}] Sending PAdES request to {}: signer={} type={} profile={} credential={} documents={}"
+                            + " local_hash={} compute_hash={} field={} page={} level={} appearance={}",
                     job.requestId(), gateway.url(), config.signerId(), config.type(), config.profileId(),
                     config.certificateAlias() == null ? "<profile default>" : config.certificateAlias(),
-                    job.documents().size());
+                    job.documents().size(),
+                    config.localHash(), config.computeHash(), config.signatureFieldName(), config.signingPage(),
+                    config.padesSignatureType() == null ? "<profile default>" : config.padesSignatureType(),
+                    job.appearance() == null ? "none" : "resolved");
 
             PdfSigningResponse response = (PdfSigningResponse) request.send(gateway.url());
             if (!response.isSuccessful()) {
