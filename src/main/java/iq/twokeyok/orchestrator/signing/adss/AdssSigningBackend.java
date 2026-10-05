@@ -328,8 +328,22 @@ public class AdssSigningBackend implements SigningBackend {
     private static String upstreamHttpError(Throwable throwable) {
         for (Throwable t = throwable; t != null && t != t.getCause(); t = t.getCause()) {
             String message = t.getMessage();
-            if (message != null && message.contains("Server returned HTTP response code")) {
+            if (message == null) {
+                continue;
+            }
+            if (message.contains("Server returned HTTP response code")) {
                 return message;
+            }
+            // In DSS mode ADSS reports a refusal in the response headers
+            // (RESPONSE_STATUS / ERROR_CODE / MESSAGE) with an empty body. The
+            // SDK's parser assumes a SOAP envelope and dereferences a null body,
+            // so the only trace of the real error is this NPE. Reporting it as an
+            // orchestrator fault sent a day of debugging in the wrong direction.
+            if (message.contains("ASC_SOAPEnvelope.getBody()")) {
+                return "ADSS answered without a SOAP body, which is what it does when the failure is in the "
+                        + "response headers instead - RESPONSE_STATUS / ERROR_CODE / MESSAGE. A stopped "
+                        + "Signing Service (ADSS error 41003) looks exactly like this. Check the service is "
+                        + "running and read the headers with: tcpdump -A -s0 'port <gateway port>'";
             }
         }
         return null;
