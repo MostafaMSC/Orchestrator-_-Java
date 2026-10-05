@@ -87,6 +87,7 @@ public class AdssConnectivityCheck implements ApplicationRunner {
 
         List<Check> checks = new ArrayList<>();
         checks.add(endpoint("Signing gateway", properties.gateway().url(), true));
+        checks.add(signingServiceStatus(properties.gateway().url()));
         // Reported, never required. These are addresses handed to ADSS, through
         // setVerificationServiceAddress and setTimeStampServiceAddress, and ADSS
         // reaches them from its own network. A timeout here usually means a
@@ -229,6 +230,63 @@ public class AdssConnectivityCheck implements ApplicationRunner {
     // ------------------------------------------------------------------
     // Individual checks
     // ------------------------------------------------------------------
+
+    /**
+     * Asks the Signing Service whether it is running, which a TCP connection
+     * cannot tell you.
+     *
+     * <p>A stopped Signing Service still accepts connections — the container is
+     * up, the module is not — so the gateway check passes and every signature
+     * then fails. Over the DSS interface ADSS states its status in response
+     * headers, so an obviously invalid document is enough to read it back:</p>
+     *
+     * <pre>
+     * RESPONSE_STATUS: FAILED
+     * ERROR_CODE: 41003
+     * MESSAGE: [Error-41003] Failed to process request - Signing service is stopped
+     * </pre>
+     *
+     * <p>Any other error code means the service is running and rejected the
+     * probe, which is the expected and healthy answer. No credential is sent and
+     * nothing is signed.</p>
+     */
+    private static Check signingServiceStatus(String url) {
+        String name = "Signing service";
+        if (url == null || url.isBlank()) {
+            return new Check(SKIP, name, "no gateway configured", false);
+        }
+        try {
+            java.net.HttpURLConnection connection =
+                    (java.net.HttpURLConnection) URI.create(url).toURL().openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(TIMEOUT_MS);
+            connection.setReadTimeout(TIMEOUT_MS);
+            connection.setRequestProperty("Content-Type", "text/xml;charset=UTF-8");
+            connection.setDoOutput(true);
+            connection.getOutputStream().write("<probe/>".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            connection.getOutputStream().flush();
+
+            String code = connection.getHeaderField("ERROR_CODE");
+            String message = connection.getHeaderField("MESSAGE");
+            connection.disconnect();
+
+            if (code == null) {
+                // No ADSS headers at all: something in front of ADSS answered.
+                // A WAF block page and a container error page look identical here.
+                return new Check(WARN, name,
+                        "no ADSS status headers in the reply (HTTP " + connection.getResponseCode()
+                                + ") — a proxy or firewall may be answering; see docs/TROUBLESHOOTING.md",
+                        false);
+            }
+            if ("41003".equals(code.trim())) {
+                return new Check(FAIL, name,
+                        "STOPPED — " + (message == null ? "ADSS error 41003" : message.trim()), true);
+            }
+            return new Check(PASS, name, "running (rejected the probe with " + code.trim() + ", as expected)", false);
+        } catch (Exception e) {
+            return new Check(WARN, name, "could not probe: " + e.getMessage(), false);
+        }
+    }
 
     private static Check endpoint(String name, String url, boolean required) {
         if (isBlank(url)) {
