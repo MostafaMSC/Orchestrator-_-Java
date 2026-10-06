@@ -134,7 +134,8 @@ public final class PdfSignatureInspector {
                         documentSignatures++;
                         allVerified &= encapsulatesItsContent(signature, bytes)
                         ? verifyEncapsulatedSignature(signature, bytes, out)
-                        : verifyDetachedSignature(signature, bytes, out);
+                        : verifyDetachedSignature(signature, bytes, out,
+                                PKCS7_SHA1_SUBFILTER.equals(signature.getSubFilter()));
                     }
                 }
 
@@ -321,14 +322,32 @@ public final class PdfSignatureInspector {
         out.add("  Digest alg: " + signer.getDigestAlgOID());
     }
 
-    /** Verifies one signature's CMS blob against the bytes its ByteRange covers. */
-    private static boolean verifyDetachedSignature(PDSignature signature, byte[] bytes, List<String> out) {
+    /**
+     * Verifies a signature whose content is not carried inside the CMS.
+     *
+     * <p>Normally the content is the byte range itself. Under
+     * {@code adbe.pkcs7.sha1} it is the <em>SHA-1 digest</em> of the byte range
+     * (PDF 1.7, 12.8.3.3), and ADSS sometimes computes the signed attributes
+     * over that digest while omitting it from the structure. Verifying such a
+     * signature against the document bytes compares {@code messageDigest}
+     * against the wrong input and fails on a valid signature, so the digest is
+     * reconstructed and supplied as the content.</p>
+     *
+     * @param legacyDigestContent the signed content is the SHA-1 digest of the
+     *                            byte range rather than the byte range
+     */
+    private static boolean verifyDetachedSignature(PDSignature signature, byte[] bytes, List<String> out,
+                                                   boolean legacyDigestContent) {
         try {
             byte[] contents = signature.getContents(bytes);
             byte[] signedContent = signature.getSignedContent(bytes);
             if (contents == null || contents.length == 0) {
                 out.add("  Verified  : FAIL (empty /Contents)");
                 return false;
+            }
+            if (legacyDigestContent) {
+                signedContent = MessageDigest.getInstance("SHA-1").digest(signedContent);
+                out.add("  Imprint   : signature covers the SHA-1 digest of the document bytes");
             }
 
             CMSSignedData cms = new CMSSignedData(new CMSProcessableByteArray(signedContent), contents);
@@ -356,7 +375,11 @@ public final class PdfSignatureInspector {
                         .build(new JcaX509CertificateConverter()
                                 .setProvider(BouncyCastleProvider.PROVIDER_NAME)
                                 .getCertificate(holder)));
-                out.add("  Verified  : " + (ok ? "PASS (signature is valid over the document bytes)" : "FAIL"));
+                out.add("  Verified  : " + (ok
+                        ? legacyDigestContent
+                                ? "PASS (legacy PKCS#7, signature valid over the document digest)"
+                                : "PASS (signature is valid over the document bytes)"
+                        : "FAIL"));
                 out.add("  Timestamp : " + (hasSignatureTimestamp(signer) ? "present (T / LTA)" : "absent"));
                 verified &= ok;
             }
