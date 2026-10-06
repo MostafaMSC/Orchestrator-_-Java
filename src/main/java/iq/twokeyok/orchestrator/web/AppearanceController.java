@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import iq.twokeyok.orchestrator.appearance.AppearanceService;
@@ -57,12 +58,26 @@ public class AppearanceController {
      * and PUT mappings. Both spellings now return the list.
      */
     @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
-    public List<AppearanceTemplateView> listAtCollectionRoot() {
-        return list();
+    public List<?> listAtCollectionRoot(
+            @RequestParam(name = "include_images", defaultValue = "false") boolean includeImages) {
+        return list(includeImages);
     }
 
+    /**
+     * @param includeImages return the stored templates whole, Base64 images and
+     *                      all. The default omits them and reports
+     *                      {@code has_image} instead, because a catalogue used
+     *                      to render a picker does not need several hundred
+     *                      kilobytes of logo per template - but a caller that
+     *                      wants to preview or copy them does, and asking for a
+     *                      template one at a time to get its image is a poor
+     *                      way to spend round trips.
+     */
     @GetMapping(path = "/list", produces = MediaType.APPLICATION_JSON_VALUE)
-    public List<AppearanceTemplateView> list() {
+    public List<?> list(@RequestParam(name = "include_images", defaultValue = "false") boolean includeImages) {
+        if (includeImages) {
+            return List.copyOf(appearanceService.list());
+        }
         return appearanceService.list().stream()
                 .map(AppearanceTemplateView::of)
                 .toList();

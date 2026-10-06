@@ -316,3 +316,13 @@ is folded into `fields.company_logo`, so it is equivalent to the nested form
 and reaches the appearance the same way. Send the nested form when you also want
 a position, label or image name; if both are present, the nested value wins.
 `hand_signature` behaves identically.
+
+By default the list reports `has_image` and omits image payloads, so a picker
+is not sent hundreds of kilobytes per template. Ask for them when you need them:
+
+```
+GET /service/signing/appearances/list?include_images=true
+```
+
+`GET /service/signing/appearances/{template_id}` always returns the template
+whole, images included.

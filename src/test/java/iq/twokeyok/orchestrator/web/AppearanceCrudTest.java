@@ -225,6 +225,27 @@ class AppearanceCrudTest {
     }
 
     @Test
+    void theListOmitsImagePayloadsUnlessAsked() throws Exception {
+        String png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGMAAQAABQAB";
+        mvc.perform(post("/service/signing/appearances").header("Authorization", AUTH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"template_id\":\"with_logo\",\"company_logo\":\"" + png + "\"}"));
+
+        // Default: has_image only, so a picker is not sent the payload.
+        mvc.perform(get("/service/signing/appearances/list").header("Authorization", AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.template_id == 'with_logo')].fields.company_logo.has_image")
+                        .value(org.hamcrest.Matchers.contains(true)))
+                .andExpect(jsonPath("$[0].fields.company_logo.value").doesNotExist());
+
+        // Asked for: the stored template whole, image included.
+        mvc.perform(get("/service/signing/appearances/list?include_images=true").header("Authorization", AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.template_id == 'with_logo')].fields.company_logo.value")
+                        .value(org.hamcrest.Matchers.contains(png)));
+    }
+
+    @Test
     void listsAtTheCollectionRootAsWellAsAtList() throws Exception {
         mvc.perform(get("/service/signing/appearances").header("Authorization", AUTH))
                 .andExpect(status().isOk())
