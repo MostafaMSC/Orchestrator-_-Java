@@ -45,6 +45,12 @@ public final class PdfSignatureInspector {
 
     /** A PAdES-LTA document timestamp, as opposed to a document signature. */
     private static final String TIMESTAMP_SUBFILTER = "ETSI.RFC3161";
+    /**
+     * The legacy PKCS#7 form, where the digest of the byte range is carried
+     * <em>inside</em> the SignedData instead of the signature being detached.
+     * ADSS signing profiles configured for {@code adbe.pkcs7.sha1} produce it.
+     */
+    private static final String PKCS7_SHA1_SUBFILTER = "adbe.pkcs7.sha1";
 
     private PdfSignatureInspector() {
     }
@@ -108,7 +114,9 @@ public final class PdfSignatureInspector {
                         allVerified &= verifyDocumentTimestamp(signature, bytes, out);
                     } else {
                         documentSignatures++;
-                        allVerified &= verifyDetachedSignature(signature, bytes, out);
+                        allVerified &= PKCS7_SHA1_SUBFILTER.equals(signature.getSubFilter())
+                        ? verifyEncapsulatedSignature(signature, bytes, out)
+                        : verifyDetachedSignature(signature, bytes, out);
                     }
                 }
 
@@ -188,6 +196,88 @@ public final class PdfSignatureInspector {
         }
     }
 
+    /**
+     * Verifies a legacy {@code adbe.pkcs7.sha1} signature.
+     *
+     * <p>Here the SignedData <em>encapsulates</em> its content, and that content
+     * is the SHA-1 digest of the byte range (PDF 1.7, 12.8.3.3) — the signature
+     * covers the digest, not the document. Verifying it as a detached signature
+     * compares {@code messageDigest} against the wrong bytes and fails on a
+     * perfectly valid signature, which is what this method exists to avoid.</p>
+     *
+     * <p>So two things are checked: the SignerInfo over the encapsulated
+     * content, and that the encapsulated digest really is the digest of this
+     * document's byte range. Either one alone would be insufficient — the first
+     * says nothing about which document was signed, the second nothing about
+     * who signed it.</p>
+     */
+    private static boolean verifyEncapsulatedSignature(PDSignature signature, byte[] bytes, List<String> out) {
+        try {
+            byte[] contents = signature.getContents(bytes);
+            byte[] signedContent = signature.getSignedContent(bytes);
+            if (contents == null || contents.length == 0) {
+                out.add("  Verified  : FAIL (empty /Contents)");
+                return false;
+            }
+
+            CMSSignedData cms = new CMSSignedData(contents);
+            Object encapsulated = cms.getSignedContent() == null ? null : cms.getSignedContent().getContent();
+            if (!(encapsulated instanceof byte[] embeddedDigest)) {
+                out.add("  Verified  : FAIL (no encapsulated content in an adbe.pkcs7.sha1 signature)");
+                return false;
+            }
+
+            boolean coversDocument = Arrays.equals(embeddedDigest,
+                    MessageDigest.getInstance("SHA-1").digest(signedContent));
+            out.add("  Imprint   : " + (coversDocument
+                    ? "matches the document bytes"
+                    : "DOES NOT match the document bytes"));
+
+            Collection<SignerInformation> signers = cms.getSignerInfos().getSigners();
+            if (signers.isEmpty()) {
+                out.add("  Verified  : FAIL (no SignerInfo in the CMS structure)");
+                return false;
+            }
+
+            boolean verified = coversDocument;
+            for (SignerInformation signer : signers) {
+                @SuppressWarnings("unchecked")
+                Collection<X509CertificateHolder> matches =
+                        cms.getCertificates().getMatches(signer.getSID());
+                if (matches.isEmpty()) {
+                    out.add("  Verified  : FAIL (signer certificate not embedded)");
+                    verified = false;
+                    continue;
+                }
+                X509CertificateHolder holder = matches.iterator().next();
+                describeSigner(holder, signer, out);
+
+                boolean ok = signer.verify(new JcaSimpleSignerInfoVerifierBuilder()
+                        .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                        .build(new JcaX509CertificateConverter()
+                                .setProvider(BouncyCastleProvider.PROVIDER_NAME)
+                                .getCertificate(holder)));
+                out.add("  Verified  : " + (ok && coversDocument
+                        ? "PASS (legacy PKCS#7, signature valid over the document digest)"
+                        : "FAIL"));
+                out.add("  Timestamp : " + (hasSignatureTimestamp(signer) ? "present (T / LTA)" : "absent"));
+                verified &= ok;
+            }
+            return verified;
+        } catch (Exception e) {
+            out.add("  Verified  : FAIL (" + e.getMessage() + ")");
+            return false;
+        }
+    }
+
+    private static void describeSigner(X509CertificateHolder holder, SignerInformation signer, List<String> out) {
+        out.add("  Signer DN : " + holder.getSubject());
+        out.add("  Issuer DN : " + holder.getIssuer());
+        out.add("  Serial    : " + holder.getSerialNumber().toString(16));
+        out.add("  Cert valid: " + holder.getNotBefore() + "  ..  " + holder.getNotAfter());
+        out.add("  Digest alg: " + signer.getDigestAlgOID());
+    }
+
     /** Verifies one signature's CMS blob against the bytes its ByteRange covers. */
     private static boolean verifyDetachedSignature(PDSignature signature, byte[] bytes, List<String> out) {
         try {
@@ -216,11 +306,7 @@ public final class PdfSignatureInspector {
                     continue;
                 }
                 X509CertificateHolder holder = matches.iterator().next();
-                out.add("  Signer DN : " + holder.getSubject());
-                out.add("  Issuer DN : " + holder.getIssuer());
-                out.add("  Serial    : " + holder.getSerialNumber().toString(16));
-                out.add("  Cert valid: " + holder.getNotBefore() + "  ..  " + holder.getNotAfter());
-                out.add("  Digest alg: " + signer.getDigestAlgOID());
+                describeSigner(holder, signer, out);
 
                 boolean ok = signer.verify(new JcaSimpleSignerInfoVerifierBuilder()
                         .setProvider(BouncyCastleProvider.PROVIDER_NAME)
