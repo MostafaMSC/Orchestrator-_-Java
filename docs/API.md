@@ -305,3 +305,14 @@ Give positions explicitly once a template mixes text and an image: the automatic
 layout puts the image on the right and stacks text on the left, but it cannot
 know the image's aspect ratio. An image the SDK cannot decode is reported as
 `1121`, not as a signing failure.
+
+Both spellings of an image are accepted. The API guide's top-level form:
+
+```json
+{ "template_id": "ministry_seal", "company_logo": "<base64>" }
+```
+
+is folded into `fields.company_logo`, so it is equivalent to the nested form
+and reaches the appearance the same way. Send the nested form when you also want
+a position, label or image name; if both are present, the nested value wins.
+`hand_signature` behaves identically.

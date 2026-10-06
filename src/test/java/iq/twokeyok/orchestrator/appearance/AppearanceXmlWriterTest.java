@@ -32,7 +32,7 @@ class AppearanceXmlWriterTest {
                 null,
                 new Font("Arial", 16, new Color(0, 0, 0, null)),
                 new Box(200, 450, 200, 80, 1),
-                fields);
+                fields, null, null);
     }
 
     @Test

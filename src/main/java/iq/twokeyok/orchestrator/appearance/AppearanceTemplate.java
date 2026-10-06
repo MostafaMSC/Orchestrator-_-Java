@@ -36,13 +36,48 @@ public record AppearanceTemplate(
         Color backgroundColor,
         Font textFont,
         Box signatureField,
-        Map<String, Field> fields) {
+        Map<String, Field> fields,
+        String companyLogo,
+        String handSignature) {
 
     public AppearanceTemplate {
         fields = fields == null ? new LinkedHashMap<>() : new LinkedHashMap<>(fields);
         width = width == null ? 463 : width;
         height = height == null ? 250 : height;
         enabled = enabled == null || enabled;
+
+        // The API guide lists company_logo and hand_signature as top-level
+        // fields of the create request, while everything downstream reads images
+        // from the fields map. Folding them in here means a client written
+        // against the guide works without the rest of the product knowing there
+        // are two spellings. They are cleared afterwards so a response carries
+        // the image once, under fields, rather than repeating a large payload.
+        fields = withImage(fields, Fields.COMPANY_LOGO, companyLogo, "Company Logo", "company-logo.png");
+        fields = withImage(fields, Fields.HAND_SIGNATURE, handSignature, "Hand Signature", "hand-signature.png");
+        companyLogo = null;
+        handSignature = null;
+    }
+
+    /**
+     * Puts a top-level image into the fields map, keeping any label, position
+     * and image name already declared there. An explicit nested value wins: a
+     * caller who sent both meant the detailed one.
+     */
+    private static Map<String, Field> withImage(Map<String, Field> fields, String key,
+                                                String base64, String label, String imageName) {
+        if (base64 == null || base64.isBlank()) {
+            return fields;
+        }
+        Field existing = fields.get(key);
+        if (existing != null && existing.value() != null && !existing.value().isBlank()) {
+            return fields;
+        }
+        fields.put(key, existing == null
+                ? new Field(true, label, false, base64, null, null, imageName)
+                : new Field(existing.include(), existing.label(), existing.showLabel(), base64,
+                        existing.position(), existing.font(),
+                        existing.imageName() == null ? imageName : existing.imageName()));
+        return fields;
     }
 
     public boolean isEnabled() {

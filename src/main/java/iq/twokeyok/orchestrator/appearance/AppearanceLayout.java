@@ -102,7 +102,11 @@ public final class AppearanceLayout {
                 color(config.textBackgroundColor()),
                 font,
                 box(config.signatureField(), width, height),
-                fields);
+                fields,
+                // Already folded into fields above, from the configuration's
+                // own company_logo / hand_signature file paths.
+                null,
+                null);
     }
 
     // ------------------------------------------------------------------ text --

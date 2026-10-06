@@ -181,6 +181,50 @@ class AppearanceCrudTest {
     }
 
     @Test
+    void acceptsCompanyLogoAtTheTopLevelAsTheApiGuideDescribesIt() throws Exception {
+        // A 1x1 PNG is enough: nothing here decodes it, the template only stores it.
+        String png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGMAAQAABQAB";
+
+        mvc.perform(post("/service/signing/appearances")
+                        .header("Authorization", AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "template_id": "top_level_logo",
+                                  "company_logo": "%s",
+                                  "hand_signature": "%s"
+                                }
+                                """.formatted(png, png)))
+                .andExpect(status().isCreated())
+                // Folded into fields, where everything downstream reads images.
+                .andExpect(jsonPath("$.fields.company_logo.value").value(png))
+                .andExpect(jsonPath("$.fields.company_logo.image_name").value("company-logo.png"))
+                .andExpect(jsonPath("$.fields.hand_signature.value").value(png))
+                // Not echoed at the top level as well: one copy of the payload.
+                .andExpect(jsonPath("$.company_logo").doesNotExist());
+    }
+
+    @Test
+    void aNestedImageValueWinsOverTheTopLevelOne() throws Exception {
+        mvc.perform(post("/service/signing/appearances")
+                        .header("Authorization", AUTH)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "template_id": "both_spellings",
+                                  "company_logo": "dG9wLWxldmVs",
+                                  "fields": {
+                                    "company_logo": { "include": true, "value": "bmVzdGVk",
+                                                      "image_name": "mine.png" }
+                                  }
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.fields.company_logo.value").value("bmVzdGVk"))
+                .andExpect(jsonPath("$.fields.company_logo.image_name").value("mine.png"));
+    }
+
+    @Test
     void listsAtTheCollectionRootAsWellAsAtList() throws Exception {
         mvc.perform(get("/service/signing/appearances").header("Authorization", AUTH))
                 .andExpect(status().isOk())
