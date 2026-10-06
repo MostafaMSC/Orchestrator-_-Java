@@ -303,3 +303,57 @@ It reports reachability of the gateway, verification, TSA, OCSP and RAS
 endpoints, whether the keystore and truststore exist and are readable, and the
 effective signature settings. It opens TCP connections and stats files only — it
 never signs and never sends a credential.
+
+Set `ORCHESTRATOR_CONFIG_DIR` when running it by hand, or it reports on
+`./config` or the defaults packaged in the jar rather than the deployment you
+mean.
+
+## A configuration verified against a live ADSS
+
+This signed a document end to end and the result passed `--verify-pdf`: an
+unattended e-seal, hashed locally so the document never leaves the host.
+
+```yaml
+signing:
+  basic-auth-type: client_credentials
+  default_credential_strategy: LATEST
+  gateway:
+    url: https://<adss-host>/adss/signing/hdsi
+    client_id: <adss originator id>
+    pdf_profile_id: adss:signing:profile:008
+    request_mode: HTTP
+  dss:
+    signature:
+      compute_hash: false
+      local_hash: true          # only the digest is sent
+      hash_algorithm: SHA256
+      dictionary_size: 20480
+      signature_level: PAdES_BASELINE_B
+      signature_field_name: Signature2
+      appearance:
+        enabled: true           # needed: the SDK creates the empty field
+        server_side_id: default_sig_appearance
+        appearances:
+          - template_id: eseal_box
+            enabled: true
+            signature_field: { page_no: 1, x: 200, y: 200, width: 100, height: 100 }
+  signers:
+    <signer-id>:
+      type: ESEAL
+      profile-id: adss:signing:profile:008
+      certificate-alias: <alias>
+      require-pin: false
+```
+
+Two details that cost time to find:
+
+- With `local_hash: true` the SDK hashes the byte range around the field named
+  by `signature_field_name`, so that field has to exist. Leaving an appearance
+  **enabled** makes the SDK create it; with the appearance disabled the request
+  fails with `The signature field '...' does not exist`. Do not pre-add the
+  field with PDFBox as well - the document then ends up with two.
+- That ADSS profile produced `adbe.pkcs7.sha1`, a legacy PKCS#7 signature:
+  valid, and accepted by Adobe Reader, but **not** a PAdES baseline signature,
+  so it carries no timestamp or `/DSS` and cannot be upgraded to LT/LTA. A
+  PAdES signature needs the ADSS profile configured for `ETSI.CAdES.detached`
+  with a TSA; `signature_level` here has nothing to work with otherwise.
