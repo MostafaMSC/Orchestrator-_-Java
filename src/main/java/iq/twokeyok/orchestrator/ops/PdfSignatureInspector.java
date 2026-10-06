@@ -11,7 +11,12 @@ import java.util.List;
 
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature;
+import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
+import org.apache.pdfbox.pdmodel.interactive.form.PDField;
+import org.apache.pdfbox.pdmodel.interactive.form.PDSignatureField;
 
 import org.bouncycastle.asn1.cms.AttributeTable;
 import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
@@ -108,6 +113,9 @@ public final class PdfSignatureInspector {
                     }
                     out.add("  Signed at : " + (signature.getSignDate() == null
                             ? "-" : signature.getSignDate().getTime()));
+                    if (!isTimestamp) {
+                        out.add("  Visible   : " + describeVisibility(document, signature));
+                    }
 
                     if (isTimestamp) {
                         documentTimestamps++;
@@ -322,6 +330,69 @@ public final class PdfSignatureInspector {
             out.add("  Verified  : FAIL (" + e.getMessage() + ")");
             return false;
         }
+    }
+
+    /**
+     * Whether this signature is drawn on a page, and where.
+     *
+     * <p>Worth reporting because "the appearance is configured" and "the
+     * appearance was rendered" are different things, and under hash signing they
+     * come apart: ADSS never sees the document, so an appearance named by
+     * {@code server_side_id} is not drawn by anything. A signature is visible
+     * when its widget has a non-empty rectangle <em>and</em> a normal appearance
+     * stream - a zero-size rectangle is the conventional invisible signature,
+     * and a rectangle with no appearance stream draws nothing.</p>
+     */
+    private static String describeVisibility(PDDocument document, PDSignature signature) {
+        try {
+            PDAcroForm form = document.getDocumentCatalog().getAcroForm();
+            if (form == null) {
+                return "no (document has no AcroForm)";
+            }
+            for (PDField field : form.getFieldTree()) {
+                if (!(field instanceof PDSignatureField signatureField)) {
+                    continue;
+                }
+                PDSignature found = signatureField.getSignature();
+                if (found == null || !found.getCOSObject().equals(signature.getCOSObject())) {
+                    continue;
+                }
+                PDAnnotationWidget widget = signatureField.getWidgets().isEmpty()
+                        ? null : signatureField.getWidgets().get(0);
+                if (widget == null || widget.getRectangle() == null) {
+                    return "no (field has no widget)";
+                }
+                PDRectangle rect = widget.getRectangle();
+                boolean placed = rect.getWidth() > 0 && rect.getHeight() > 0;
+                boolean drawn = widget.getAppearance() != null
+                        && widget.getAppearance().getNormalAppearance() != null;
+                String where = "page %s, %.0f,%.0f %.0fx%.0f".formatted(
+                        pageOf(document, widget), rect.getLowerLeftX(), rect.getLowerLeftY(),
+                        rect.getWidth(), rect.getHeight());
+                if (placed && drawn) {
+                    return "yes - " + where;
+                }
+                if (placed) {
+                    return "no - box at " + where + " but no appearance stream";
+                }
+                return "no (invisible: zero-size rectangle)";
+            }
+            return "no (no signature field references this signature)";
+        } catch (Exception e) {
+            return "unknown (" + e.getMessage() + ")";
+        }
+    }
+
+    private static String pageOf(PDDocument document, PDAnnotationWidget widget) {
+        if (widget.getPage() == null) {
+            return "?";
+        }
+        for (int i = 0; i < document.getNumberOfPages(); i++) {
+            if (document.getPage(i).getCOSObject().equals(widget.getPage().getCOSObject())) {
+                return String.valueOf(i + 1);
+            }
+        }
+        return "?";
     }
 
     /** A signature timestamp lives as an unsigned attribute on the SignerInfo. */
