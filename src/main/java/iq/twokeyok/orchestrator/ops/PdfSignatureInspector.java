@@ -115,6 +115,16 @@ public final class PdfSignatureInspector {
                             ? "-" : signature.getSignDate().getTime()));
                     if (!isTimestamp) {
                         out.add("  Visible   : " + describeVisibility(document, signature));
+                        // The maths checking out is not the same as a reader
+                        // accepting it: adbe.pkcs7.sha1 digests the document
+                        // with SHA-1, and Acrobat has refused SHA-1 document
+                        // signatures for years. A bare PASS here sent an
+                        // operator looking for a bug in a correct file.
+                        if (PKCS7_SHA1_SUBFILTER.equals(signature.getSubFilter())) {
+                            out.add("  Standard  : legacy PKCS#7 with a SHA-1 document digest."
+                                    + " Not a PAdES baseline signature, and Acrobat rejects SHA-1:"
+                                    + " use an ADSS profile configured for ETSI.CAdES.detached");
+                        }
                     }
 
                     if (isTimestamp) {
@@ -122,7 +132,7 @@ public final class PdfSignatureInspector {
                         allVerified &= verifyDocumentTimestamp(signature, bytes, out);
                     } else {
                         documentSignatures++;
-                        allVerified &= PKCS7_SHA1_SUBFILTER.equals(signature.getSubFilter())
+                        allVerified &= encapsulatesItsContent(signature, bytes)
                         ? verifyEncapsulatedSignature(signature, bytes, out)
                         : verifyDetachedSignature(signature, bytes, out);
                     }
@@ -205,7 +215,32 @@ public final class PdfSignatureInspector {
     }
 
     /**
-     * Verifies a legacy {@code adbe.pkcs7.sha1} signature.
+     * Whether the CMS carries its content inside, which decides how it must be
+     * verified.
+     *
+     * <p>Chosen from the structure rather than from {@code /SubFilter}, because
+     * the two disagree in practice: ADSS has produced {@code adbe.pkcs7.sha1}
+     * signatures both with an encapsulated digest and without one. Branching on
+     * the label alone failed a valid detached signature that happened to carry
+     * the legacy subfilter. The structure is what the verification actually
+     * depends on, so it is what gets asked.</p>
+     */
+    private static boolean encapsulatesItsContent(PDSignature signature, byte[] bytes) {
+        try {
+            byte[] contents = signature.getContents(bytes);
+            if (contents == null || contents.length == 0) {
+                return false;
+            }
+            CMSSignedData cms = new CMSSignedData(contents);
+            return cms.getSignedContent() != null && cms.getSignedContent().getContent() instanceof byte[];
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * Verifies a signature that encapsulates its content - the legacy
+     * {@code adbe.pkcs7.sha1} form.
      *
      * <p>Here the SignedData <em>encapsulates</em> its content, and that content
      * is the SHA-1 digest of the byte range (PDF 1.7, 12.8.3.3) — the signature
@@ -268,14 +303,6 @@ public final class PdfSignatureInspector {
                 out.add("  Verified  : " + (ok && coversDocument
                         ? "PASS (legacy PKCS#7, signature valid over the document digest)"
                         : "FAIL"));
-                // The maths checking out is not the same as a reader accepting
-                // it. adbe.pkcs7.sha1 digests the document with SHA-1 by
-                // definition, and Adobe Acrobat has refused SHA-1 document
-                // signatures for years - reporting a bare PASS here sent an
-                // operator looking for a bug in a correctly produced file.
-                out.add("  Standard  : legacy PKCS#7 with a SHA-1 document digest."
-                        + " Not a PAdES baseline signature, and Acrobat rejects SHA-1:"
-                        + " use an ADSS profile configured for ETSI.CAdES.detached");
                 out.add("  Timestamp : " + (hasSignatureTimestamp(signer) ? "present (T / LTA)" : "absent"));
                 verified &= ok;
             }
