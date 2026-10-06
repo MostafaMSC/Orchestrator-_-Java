@@ -67,6 +67,8 @@ public class AppearanceXmlWriter {
         appendBorder(xml, template);
         appendBackground(xml, template);
 
+        Map<String, Box> positions = effectivePositions(template, values);
+
         xml.append("<Fields>");
         for (Map.Entry<String, String> entry : orderedFields(template, values).entrySet()) {
             String key = entry.getKey();
@@ -76,7 +78,7 @@ public class AppearanceXmlWriter {
                 continue;
             }
             appendField(xml, template, key, field, value,
-                    overrides.getOrDefault(key, LabelOverride.NONE));
+                    overrides.getOrDefault(key, LabelOverride.NONE), positions.get(key));
         }
         xml.append("</Fields>");
         xml.append("</SignatureAppearance>");
@@ -96,7 +98,8 @@ public class AppearanceXmlWriter {
                              String key,
                              Field field,
                              String value,
-                             LabelOverride override) {
+                             LabelOverride override,
+                             Box position) {
         String adssName = ADSS_FIELD_NAMES.get(key);
         if (adssName == null) {
             return;
@@ -109,7 +112,7 @@ public class AppearanceXmlWriter {
         xml.append("<Field border=\"false\" labelName=\"").append(escape(stripTrailingSeparator(label)))
                 .append("\" name=\"").append(adssName)
                 .append("\" showLabel=\"").append(showLabel).append("\">");
-        appendPosition(xml, field.position());
+        appendPosition(xml, position);
         xml.append("<Value>").append(escape(value)).append("</Value>");
         if (isImageField(key)) {
             xml.append("<ImageName>")
@@ -121,10 +124,62 @@ public class AppearanceXmlWriter {
         xml.append("</Field>");
     }
 
-    private static void appendPosition(StringBuilder xml, Box position) {
-        if (position == null) {
-            return;
+    /**
+     * Gives every field a position, laying out the ones that have none.
+     *
+     * <p>{@code <Position>} is not optional: the SDK's appearance parser reads
+     * {@code x}/{@code y}/{@code width}/{@code height} off that element without
+     * checking it exists, so omitting it fails the whole request with a
+     * NullPointerException inside {@code ASC_PdfSignatureAppearance}. Templates
+     * declared in {@code orchestrator.yml} are already laid out by
+     * {@code AppearanceLayout}; templates created through the appearance API
+     * usually are not, because asking a caller to compute pixel offsets for
+     * every line would make that endpoint far less useful.</p>
+     *
+     * <p>Text fields are stacked top to bottom in declaration order. An image
+     * field with no position gets a square block on the right, which is where a
+     * seal or logo conventionally sits.</p>
+     */
+    private static Map<String, Box> effectivePositions(AppearanceTemplate template, Map<String, String> values) {
+        Map<String, Box> positions = new LinkedHashMap<>();
+        int margin = 8;
+        int lineHeight = template.textFont() == null ? 18 : Math.max(14, template.textFont().fontSize() + 6);
+        int imageWidth = 0;
+
+        for (Map.Entry<String, String> entry : orderedFields(template, values).entrySet()) {
+            Field field = template.fields().get(entry.getKey());
+            if (field != null && isImageField(entry.getKey()) && field.position() == null) {
+                imageWidth = Math.min(template.height(), template.width() / 3);
+            }
         }
+        int textWidth = Math.max(40, template.width() - imageWidth - (margin * 2));
+        int row = 0;
+
+        for (Map.Entry<String, String> entry : orderedFields(template, values).entrySet()) {
+            String key = entry.getKey();
+            Field field = template.fields().get(key);
+            if (field == null || !field.included() || entry.getValue() == null || entry.getValue().isBlank()) {
+                continue;
+            }
+            if (field.position() != null) {
+                positions.put(key, field.position());
+                continue;
+            }
+            if (isImageField(key)) {
+                int side = Math.max(20, imageWidth - margin);
+                positions.put(key, new Box(template.width() - side - margin,
+                        margin, side, side, null));
+            } else {
+                positions.put(key, new Box(margin, margin + (row * lineHeight), textWidth, lineHeight, null));
+                row++;
+            }
+        }
+        return positions;
+    }
+
+    private static void appendPosition(StringBuilder xml, Box box) {
+        // Never omitted - see effectivePositions.
+        Box position = box == null ? new Box(8, 8, 200, 18, null) : box;
         xml.append("<Position height=\"").append(orZero(position.height()))
                 .append("\" width=\"").append(orZero(position.width()))
                 .append("\" x=\"").append(orZero(position.x()))
