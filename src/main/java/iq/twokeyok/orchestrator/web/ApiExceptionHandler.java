@@ -3,13 +3,18 @@ package iq.twokeyok.orchestrator.web;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import iq.twokeyok.orchestrator.error.ErrorCode;
 import iq.twokeyok.orchestrator.error.OrchestratorException;
@@ -51,6 +56,28 @@ public class ApiExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ErrorResponse> handleTooLarge(MaxUploadSizeExceededException e) {
         return respond(ErrorCode.FILE_TOO_LARGE, ErrorCode.FILE_TOO_LARGE.message());
+    }
+
+    /**
+     * A wrong method, an unknown path or an unsupported content type is the
+     * caller's mistake, not ours. These used to fall through to
+     * {@link #handleUnexpected} and come back as {@code 1001} with HTTP 500,
+     * which tells an integrator their request was fine and our service is
+     * broken - the opposite of what happened.
+     */
+    @ExceptionHandler({HttpRequestMethodNotSupportedException.class,
+            HttpMediaTypeNotSupportedException.class,
+            NoResourceFoundException.class,
+            NoHandlerFoundException.class})
+    public ResponseEntity<ErrorResponse> handleBadRoute(Exception e) {
+        HttpStatus status = e instanceof HttpRequestMethodNotSupportedException ? HttpStatus.METHOD_NOT_ALLOWED
+                : e instanceof HttpMediaTypeNotSupportedException ? HttpStatus.UNSUPPORTED_MEDIA_TYPE
+                : HttpStatus.NOT_FOUND;
+        log.info("Request rejected with {}: {}", status.value(), e.getMessage());
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return new ResponseEntity<>(
+                new ErrorResponse(status.value(), e.getMessage() + " - see docs/API.md"), headers, status);
     }
 
     @ExceptionHandler(Exception.class)

@@ -181,6 +181,20 @@ class AppearanceCrudTest {
     }
 
     @Test
+    void listsAtTheCollectionRootAsWellAsAtList() throws Exception {
+        mvc.perform(get("/service/signing/appearances").header("Authorization", AUTH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.template_id == 'from_config')]").isNotEmpty());
+    }
+
+    @Test
+    void reportsAWrongMethodAsSuchRatherThanAsAnInternalError() throws Exception {
+        mvc.perform(delete("/service/signing/appearances").header("Authorization", AUTH))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.error_code").value(405));
+    }
+
+    @Test
     void requiresAuthentication() throws Exception {
         mvc.perform(get("/service/signing/appearances/list")).andExpect(status().isUnauthorized());
         mvc.perform(delete("/service/signing/appearances/my_seal")).andExpect(status().isUnauthorized());

@@ -50,6 +50,17 @@ public class AppearanceController {
         this.appearanceService = appearanceService;
     }
 
+    /**
+     * The API guide documents the list at {@code /list}, but a plain {@code GET}
+     * on the collection is what an integrator tries first - and it used to come
+     * back as a 500 with error 1001, because the collection path had only POST
+     * and PUT mappings. Both spellings now return the list.
+     */
+    @GetMapping(produces = MediaType.APPLICATION_JSON_VALUE)
+    public List<AppearanceTemplateView> listAtCollectionRoot() {
+        return list();
+    }
+
     @GetMapping(path = "/list", produces = MediaType.APPLICATION_JSON_VALUE)
     public List<AppearanceTemplateView> list() {
         return appearanceService.list().stream()
