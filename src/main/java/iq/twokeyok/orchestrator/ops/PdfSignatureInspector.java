@@ -268,6 +268,14 @@ public final class PdfSignatureInspector {
                 out.add("  Verified  : " + (ok && coversDocument
                         ? "PASS (legacy PKCS#7, signature valid over the document digest)"
                         : "FAIL"));
+                // The maths checking out is not the same as a reader accepting
+                // it. adbe.pkcs7.sha1 digests the document with SHA-1 by
+                // definition, and Adobe Acrobat has refused SHA-1 document
+                // signatures for years - reporting a bare PASS here sent an
+                // operator looking for a bug in a correctly produced file.
+                out.add("  Standard  : legacy PKCS#7 with a SHA-1 document digest."
+                        + " Not a PAdES baseline signature, and Acrobat rejects SHA-1:"
+                        + " use an ADSS profile configured for ETSI.CAdES.detached");
                 out.add("  Timestamp : " + (hasSignatureTimestamp(signer) ? "present (T / LTA)" : "absent"));
                 verified &= ok;
             }
