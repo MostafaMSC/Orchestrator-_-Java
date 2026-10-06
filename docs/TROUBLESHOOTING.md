@@ -90,8 +90,39 @@ handler. Three different causes presented identically here:
 | ADSS's own error page | the request reached ADSS and it refused |
 
 Strip the tags before concluding anything — the WAF page names the blocked URL,
-the client IP and an Attack ID to quote at whoever runs the firewall. A
-multipart POST carrying a PDF is the kind of request a WAF blocks by default.
+the client IP and an Attack ID to quote at whoever runs the firewall.
+
+### When a WAF blocks the signing request
+
+Observed against one staging estate: every request the ADSS Client SDK sent to
+`/adss/signing/hdsi` was blocked, while every hand-built equivalent passed. Each
+of these was sent from the same host to the same URL and **allowed**:
+
+| Sent with curl | Result |
+|---|---|
+| a plain `multipart/form-data` POST | allowed |
+| the same, with a PDF as a second part | allowed |
+| the real `HTTPRequestParameters` JSON the SDK sends | allowed |
+| `Content-Type: RequestParameters` on that part (the SDK's non-standard value) | allowed |
+| `multipart/form-data;charset=UTF-8 boundary=…` (the SDK's non-conformant header) | allowed |
+
+And both of these, from the orchestrator, were **blocked**:
+
+| Sent by the SDK | Result |
+|---|---|
+| full-document signing (`local_hash: false`) | blocked |
+| hash signing (`local_hash: true`) — digest only, no document | blocked |
+
+So the payload is irrelevant: a request carrying nothing but a hash is blocked
+too. Do not spend time narrowing it from outside, as was done here — the WAF's
+own log, looked up by the Message ID on the block page, names the matched rule
+directly. Collect two or three Message IDs and the elimination table above, and
+ask for an exemption for `POST /adss/signing/hdsi` from the orchestrator's
+source address.
+
+Note for anyone reaching for hash signing as a way round a firewall: it is not
+one. It also cannot produce a visible signature, because ADSS never sees the
+page.
 
 ## Reading what ADSS actually said
 
