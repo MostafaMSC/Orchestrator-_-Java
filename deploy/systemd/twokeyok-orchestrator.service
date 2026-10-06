@@ -11,6 +11,7 @@ Group=twokeyok
 
 Environment="ORCHESTRATOR_CONFIG_DIR=/etc/twokeyok/orchestrator"
 Environment="LOG_DIR=/var/log/twokeyok-orchestrator"
+Environment="ORCHESTRATOR_STATE_DIR=/var/lib/twokeyok-orchestrator"
 Environment="JAVA_OPTS=-Xms256m -Xmx1024m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom -Dfile.encoding=UTF-8"
 EnvironmentFile=-/etc/twokeyok/orchestrator/orchestrator.env
 
@@ -37,6 +38,12 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
 ReadWritePaths=/var/log/twokeyok-orchestrator
+# Appearance templates created through the API are application state, not
+# configuration, so they live here rather than under /etc. systemd creates the
+# directory owned by User= and adds it to the writable set; without it
+# ProtectSystem=strict makes every path read-only and storing a template fails.
+StateDirectory=twokeyok-orchestrator
+StateDirectoryMode=0750
 
 StandardOutput=journal
 StandardError=journal

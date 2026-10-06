@@ -16,6 +16,7 @@ APP_GROUP="twokeyok"
 INSTALL_DIR="/opt/twokeyok/orchestrator"
 CONFIG_DIR="/etc/twokeyok/orchestrator"
 LOG_DIR="/var/log/${APP_NAME}"
+STATE_DIR="/var/lib/${APP_NAME}"
 UNIT_FILE="/etc/systemd/system/${APP_NAME}.service"
 MIN_JAVA_MAJOR=17
 
@@ -63,6 +64,10 @@ install -d -o root        -g "${APP_GROUP}" -m 0750 "${CONFIG_DIR}"
 install -d -o root        -g "${APP_GROUP}" -m 0750 "${CONFIG_DIR}/appearances"
 install -d -o root        -g "${APP_GROUP}" -m 0750 "${CONFIG_DIR}/tls"
 install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0750 "${LOG_DIR}"
+# Appearance templates created through the API are written here. systemd's
+# StateDirectory= would create it on start, but creating it now means a
+# first run that writes a template cannot fail on a missing directory.
+install -d -o "${APP_USER}" -g "${APP_GROUP}" -m 0750 "${STATE_DIR}" "${STATE_DIR}/appearances"
 log "Directory layout ready"
 
 # ------------------------------------------------------------------- jar ----

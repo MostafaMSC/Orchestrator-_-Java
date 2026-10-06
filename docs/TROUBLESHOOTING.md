@@ -155,3 +155,39 @@ on the gateway alone.
   `multipart/form-data;charset=UTF-8 boundary=…` — a space where RFC 2045 wants
   a semicolon. Observed, but not seen to cause a failure: every HTTP-mode
   failure here had another explanation. Noted so it is not mistaken for a cause.
+
+## Storing an appearance fails with 1127
+
+`1127 Signature appearance template [...] could not be stored`, while reading
+templates from the same directory works.
+
+The systemd unit runs with `ProtectSystem=strict`, which makes the entire
+filesystem read-only to the service apart from the paths it declares. Moving the
+store elsewhere does not help - `/etc`, `/var/lib` and everywhere else are
+equally read-only until the unit says otherwise.
+
+The unit declares a state directory for exactly this:
+
+```ini
+StateDirectory=twokeyok-orchestrator
+Environment="ORCHESTRATOR_STATE_DIR=/var/lib/twokeyok-orchestrator"
+```
+
+systemd creates it owned by `User=` and adds it to the writable set, and the
+packaged default puts the appearance store inside it. Point `store-path` there:
+
+```yaml
+signing:
+  dss:
+    signature:
+      appearance:
+        store-path: /var/lib/twokeyok-orchestrator/appearances
+```
+
+After changing the unit, `systemctl daemon-reload` before restarting - editing
+the file alone has no effect.
+
+Appearance templates created through the API are application state, not
+configuration, which is why they belong there rather than beside
+`orchestrator.yml`. Templates declared in `orchestrator.yml` stay read-only
+through the API regardless.

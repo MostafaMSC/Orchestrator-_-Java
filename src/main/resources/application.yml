@@ -100,7 +100,10 @@ signing:
       appearance:
         enabled: true
         use_default: true
-        store-path: ${ORCHESTRATOR_CONFIG_DIR:./config}/appearances
+        # Templates created through the appearance API are written here, so it
+        # has to be writable by the service. Under systemd that is the
+        # StateDirectory; /etc is read-only to the unit by design.
+        store-path: ${ORCHESTRATOR_STATE_DIR:${ORCHESTRATOR_CONFIG_DIR:.}/config}/appearances
         reload-always: false
   limits:
     max-files-per-request: 20
