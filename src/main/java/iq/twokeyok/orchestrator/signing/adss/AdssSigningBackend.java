@@ -339,6 +339,16 @@ public class AdssSigningBackend implements SigningBackend {
             // SDK's parser assumes a SOAP envelope and dereferences a null body,
             // so the only trace of the real error is this NPE. Reporting it as an
             // orchestrator fault sent a day of debugging in the wrong direction.
+            // Upgrading to LT/LTA attaches revocation data and a timestamp to
+            // the SignerInfo's unsigned attributes. A legacy PKCS#7 signature
+            // has no attribute table, so the SDK dereferences null and the
+            // real cause - the signing profile - is nowhere in the message.
+            if (message.contains("AttributeTable")) {
+                return "the ADSS signing profile produces a legacy PKCS#7 signature, which cannot be upgraded "
+                        + "to PAdES-LT or LTA: there are no unsigned attributes to carry the revocation data "
+                        + "and timestamp. Either set signature_level to PAdES_BASELINE_B, or use a signing "
+                        + "profile configured for ETSI.CAdES.detached";
+            }
             if (message.contains("ASC_SOAPEnvelope.getBody()")) {
                 return "ADSS answered without a SOAP body, which is what it does when the failure is in the "
                         + "response headers instead - RESPONSE_STATUS / ERROR_CODE / MESSAGE. Seen as 41003, "
