@@ -41,6 +41,33 @@ public class AppearanceService {
                 .orElseThrow(() -> new OrchestratorException(ErrorCode.APPEARANCE_NOT_FOUND, templateId));
     }
 
+    /** The outcome of a create-or-update, so the endpoint can answer 201 or 200. */
+    public record Saved(AppearanceTemplate template, boolean created) {
+    }
+
+    /**
+     * Stores a template under its {@code template_id}.
+     *
+     * <p>Create and update are the same operation here, which is what the API
+     * guide describes: the caller sends the template it wants to exist. The only
+     * difference is the status code, so a client that expects {@code 201} on
+     * create still gets it.</p>
+     */
+    public Saved save(AppearanceTemplate template) {
+        if (template == null || template.templateId() == null || template.templateId().isBlank()) {
+            throw new OrchestratorException(ErrorCode.APPEARANCE_ID_REQUIRED);
+        }
+        boolean created = repository.save(template);
+        return new Saved(get(template.templateId()), created);
+    }
+
+    public void delete(String templateId) {
+        if (templateId == null || templateId.isBlank()) {
+            throw new OrchestratorException(ErrorCode.APPEARANCE_ID_REQUIRED);
+        }
+        repository.delete(templateId);
+    }
+
     /**
      * @param defaultTemplateId    template chosen by configuration
      * @param request              the caller's {@code signature_appearance}, may be {@code null}

@@ -128,6 +128,14 @@ public record AppearanceTemplate(
          * has no role field, so the value becomes the signature's signer role.
          */
         public static final String SIGNER_ROLE = "signer_role";
+        /**
+         * Accepted for compatibility with the API guide and stored with the
+         * template, but never drawn: ADSS's appearance document has no user-info
+         * element. The vendor's PDF signature guide lists the overridable fields
+         * as hand signature, company logo, signed by, reason, location and
+         * contact info - this is not among them.
+         */
+        public static final String USER_INFO = "user_info";
         public static final String REASON = "reason";
         public static final String LOCATION = "location";
         public static final String SIGNING_DATE = "signing_date";

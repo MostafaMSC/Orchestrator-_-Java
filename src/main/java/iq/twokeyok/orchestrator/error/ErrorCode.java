@@ -53,7 +53,16 @@ public enum ErrorCode {
     UNSUPPORTED_HASH_ALGORITHM(1119, "Unsupported hash algorithm [{0}]", HttpStatus.BAD_REQUEST),
     UNSUPPORTED_SIGNATURE_LEVEL(1120, "Signature level [{0}] is not a PDF signature level supported by this orchestrator", HttpStatus.INTERNAL_SERVER_ERROR),
     APPEARANCE_IMAGE_UNREADABLE(1121, "Appearance image [{0}] could not be read", HttpStatus.INTERNAL_SERVER_ERROR),
-    CREDENTIAL_REQUIRED(1122, "No credential was supplied and default_credential_strategy is NONE", HttpStatus.BAD_REQUEST);
+    CREDENTIAL_REQUIRED(1122, "No credential was supplied and default_credential_strategy is NONE", HttpStatus.BAD_REQUEST),
+    APPEARANCE_ID_REQUIRED(1123, "template_id is required", HttpStatus.BAD_REQUEST),
+    APPEARANCE_EXISTS(1124, "Signature appearance template [{0}] already exists", HttpStatus.CONFLICT),
+    APPEARANCE_READ_ONLY(1125,
+            "Signature appearance template [{0}] is declared in the configuration and cannot be changed through the API",
+            HttpStatus.CONFLICT),
+    APPEARANCE_STORE_UNAVAILABLE(1126,
+            "No writable appearance store is configured. Set signing.dss.signature.appearance.store-path",
+            HttpStatus.INTERNAL_SERVER_ERROR),
+    APPEARANCE_NOT_WRITTEN(1127, "Signature appearance template [{0}] could not be stored", HttpStatus.INTERNAL_SERVER_ERROR);
 
     private final int code;
     private final String message;

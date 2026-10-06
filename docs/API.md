@@ -201,3 +201,78 @@ diagnostics.
 | 1120 | 500 | Configured `signature_level` is not a PDF level this orchestrator supports |
 | 1121 | 500 | An appearance image could not be read |
 | 1122 | 400 | No credential supplied and `default_credential_strategy` is `NONE` |
+
+## Signature appearance management
+
+The appearance catalogue is managed through the API as well as the configuration
+file. `template_id` from any of these is what `/service/sign` accepts in
+`signature_appearance`.
+
+| Operation | Method | Path | Success |
+|---|---|---|---|
+| List | `GET` | `/service/signing/appearances/list` | 200, array |
+| Get by id | `GET` | `/service/signing/appearances/{template_id}` | 200 |
+| Create | `POST` | `/service/signing/appearances` | **201** |
+| Update | `POST` (or `PUT`) | `/service/signing/appearances` | **200** |
+| Delete | `DELETE` | `/service/signing/appearances/{template_id}` | 204 |
+
+Create and update are one operation taking the template the caller wants to
+exist; the status code distinguishes them.
+
+```bash
+curl -u 'client:secret' -X POST https://<host>/orchestrator/service/signing/appearances \
+  -H 'Content-Type: application/json' -d '{
+    "template_id": "ministry_seal",
+    "name": "Ministry e-seal",
+    "enabled": true,
+    "width": 400, "height": 120,
+    "signature_field": { "x": 200, "y": 200, "width": 100, "height": 100, "page_no": 1 },
+    "text_font": { "name": "Arial", "size": 12, "color": { "r": 0, "g": 0, "b": 0 } },
+    "background_color": { "r": 255, "g": 255, "b": 255, "a": 0.5 },
+    "fields": {
+      "signed_by":     { "include": true, "label": "Sealed By", "show_label": true },
+      "signing_date":  { "include": true, "label": "Date", "show_label": true,
+                         "value": "yyyy.MM.dd HH:mm:ss ZZ" },
+      "reason":        { "include": true, "label": "Reason", "show_label": true },
+      "company_logo":  { "include": true, "image_name": "seal.png",
+                         "position": { "x": 300, "y": 20, "width": 90, "height": 90 } }
+    }
+  }'
+```
+
+Then sign with it:
+
+```bash
+curl -u 'client:secret' -F 'input_files=@document.pdf' \
+  -F 'signature_appearance={"template_id":"ministry_seal"};type=application/json' \
+  -o signed.pdf -X POST https://<host>/orchestrator/service/sign
+```
+
+### Where templates live, and which can be changed
+
+Managed templates are JSON files in `signing.dss.signature.appearance.store-path`,
+one per `template_id` - the API and the directory are the same store, so an
+operator can inspect, back up and hand-edit what callers create. Without a
+`store-path` the management endpoints return `1126`.
+
+Templates declared in `orchestrator.yml` are listed and usable but **cannot be
+changed or deleted through the API** (`1125`): that file belongs to whoever
+operates the service, and a write here would be undone at the next restart.
+
+`template_id` must match `[A-Za-z0-9._-]{1,64}`, so it cannot escape the
+store directory or collide on a case-insensitive filesystem (`1123`).
+
+### Visible appearances and hash signing
+
+A visible appearance works with `local_hash: true`. ADSS never sees the
+document in that mode, so the appearance is rendered from the inline appearance
+document the SDK builds - which means **`server_side_id` must not be set**.
+With it set, the request only names an ADSS-side appearance that nothing will
+draw. The vendor's own PDF signature guide pairs `SetLocalHash(true)` with
+`SetSignatureAppearance(...)` for exactly this reason.
+
+`user_info` is accepted and stored for compatibility with the API guide, but
+it is never drawn: ADSS's appearance document has no user-info element. The
+overridable fields are signed by, reason, location, contact info, company logo
+and hand signature. `signer_role` is likewise carried but not drawn - it
+becomes the signature's signer role instead.

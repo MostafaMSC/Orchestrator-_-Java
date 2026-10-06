@@ -22,6 +22,8 @@ import org.springframework.stereotype.Repository;
 
 import iq.twokeyok.orchestrator.config.SigningProperties;
 import iq.twokeyok.orchestrator.config.SigningProperties.AppearanceTemplateConfig;
+import iq.twokeyok.orchestrator.error.ErrorCode;
+import iq.twokeyok.orchestrator.error.OrchestratorException;
 
 /**
  * The signature appearance catalogue, assembled from two sources.
@@ -50,6 +52,13 @@ public class AppearanceRepository {
     private final Path configDir;
 
     private volatile Map<String, AppearanceTemplate> templates = Map.of();
+    /**
+     * Which templates came from the writable store, and so may be changed through
+     * the API. A template declared in {@code orchestrator.yml} belongs to whoever
+     * edits that file; overwriting it here would be undone at the next restart,
+     * so those are refused rather than silently lost.
+     */
+    private volatile java.util.Set<String> managed = java.util.Set.of();
 
     public AppearanceRepository(SigningProperties properties, ObjectMapper objectMapper) {
         this.config = properties.dss().signature().appearance();
@@ -99,8 +108,13 @@ public class AppearanceRepository {
             }
             register(loaded, AppearanceLayout.toTemplate(declared, configDir), "configuration");
         }
+        java.util.Set<String> fromStore = new java.util.LinkedHashSet<>();
         for (AppearanceTemplate stored : readFromStore()) {
+            int before = loaded.size();
             register(loaded, stored, config.storePath());
+            if (loaded.size() > before) {
+                fromStore.add(stored.templateId());
+            }
         }
         if (loaded.isEmpty()) {
             for (AppearanceTemplate bundled : readBundled()) {
@@ -109,7 +123,90 @@ public class AppearanceRepository {
         }
 
         this.templates = Map.copyOf(loaded);
+        this.managed = java.util.Set.copyOf(fromStore);
         log.info("Loaded {} signature appearance template(s): {}", templates.size(), templates.keySet());
+    }
+
+    // ------------------------------------------------------------------
+    // Management, for the appearance CRUD endpoints
+    // ------------------------------------------------------------------
+
+    /** {@code true} when a store directory is configured, so templates can be written. */
+    public boolean isWritable() {
+        return config.storePath() != null && !config.storePath().isBlank();
+    }
+
+    /** {@code true} when this template lives in the store rather than the configuration. */
+    public boolean isManaged(String templateId) {
+        return templateId != null && managed.contains(templateId);
+    }
+
+    /**
+     * Writes a template to the store and reloads the catalogue.
+     *
+     * <p>One JSON file per {@code template_id}, which is also how templates
+     * placed there by hand are picked up â€” the API and the filesystem are the
+     * same store, deliberately, so an operator can inspect and back up what
+     * callers have created.</p>
+     *
+     * @return {@code true} when the template did not exist before
+     */
+    public synchronized boolean save(AppearanceTemplate template) {
+        requireWritableStore();
+        String templateId = template.templateId();
+        boolean existed = findById(templateId).isPresent();
+        if (existed && !isManaged(templateId)) {
+            throw new OrchestratorException(ErrorCode.APPEARANCE_READ_ONLY, templateId);
+        }
+        Path file = storeFile(templateId);
+        try {
+            Files.createDirectories(file.getParent());
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), template);
+        } catch (IOException e) {
+            log.error("Cannot write appearance template {}: {}", file, e.getMessage());
+            throw new OrchestratorException(ErrorCode.APPEARANCE_NOT_WRITTEN, e, templateId);
+        }
+        reload();
+        log.info("Appearance template '{}' {}", templateId, existed ? "updated" : "created");
+        return !existed;
+    }
+
+    /** Removes a stored template. Configuration-declared templates are refused. */
+    public synchronized void delete(String templateId) {
+        requireWritableStore();
+        if (findById(templateId).isEmpty()) {
+            throw new OrchestratorException(ErrorCode.APPEARANCE_NOT_FOUND, templateId);
+        }
+        if (!isManaged(templateId)) {
+            throw new OrchestratorException(ErrorCode.APPEARANCE_READ_ONLY, templateId);
+        }
+        try {
+            Files.deleteIfExists(storeFile(templateId));
+        } catch (IOException e) {
+            log.error("Cannot delete appearance template {}: {}", templateId, e.getMessage());
+            throw new OrchestratorException(ErrorCode.APPEARANCE_NOT_WRITTEN, e, templateId);
+        }
+        reload();
+        log.info("Appearance template '{}' deleted", templateId);
+    }
+
+    private void requireWritableStore() {
+        if (!isWritable()) {
+            throw new OrchestratorException(ErrorCode.APPEARANCE_STORE_UNAVAILABLE);
+        }
+    }
+
+    /**
+     * The file a template is stored in. {@code template_id} reaches this from a
+     * request, so it is checked against a conservative character set: anything
+     * else could escape the store directory or collide on a case-insensitive
+     * filesystem.
+     */
+    private Path storeFile(String templateId) {
+        if (templateId == null || templateId.isBlank() || !templateId.matches("[A-Za-z0-9._-]{1,64}")) {
+            throw new OrchestratorException(ErrorCode.APPEARANCE_ID_REQUIRED);
+        }
+        return Path.of(config.storePath()).toAbsolutePath().normalize().resolve(templateId + ".json");
     }
 
     private static void register(Map<String, AppearanceTemplate> target, AppearanceTemplate template, String origin) {
