@@ -276,3 +276,32 @@ it is never drawn: ADSS's appearance document has no user-info element. The
 overridable fields are signed by, reason, location, contact info, company logo
 and hand signature. `signer_role` is likewise carried but not drawn - it
 becomes the signature's signer role instead.
+
+### Images in an appearance
+
+An image field carries the image as Base64 in its `value`, and `image_name`
+is the file name recorded in the appearance document:
+
+```json
+"fields": {
+  "company_logo": {
+    "include": true,
+    "image_name": "logo.png",
+    "value": "<base64 of the PNG>",
+    "position": { "x": 290, "y": 15, "width": 90, "height": 90 }
+  }
+}
+```
+
+`company_logo` and `hand_signature` are the two image fields. A caller can
+also supply either per request instead of baking it into the template, which
+suits a per-tenant logo:
+
+```bash
+-F 'signature_appearance={"template_id":"eseal_v1","company_logo":"<base64>"};type=application/json'
+```
+
+Give positions explicitly once a template mixes text and an image: the automatic
+layout puts the image on the right and stacks text on the left, but it cannot
+know the image's aspect ratio. An image the SDK cannot decode is reported as
+`1121`, not as a signing failure.

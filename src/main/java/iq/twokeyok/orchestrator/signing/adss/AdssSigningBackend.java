@@ -92,6 +92,14 @@ public class AdssSigningBackend implements SigningBackend {
                         upstream, e);
                 throw new OrchestratorException(ErrorCode.ADSS_REJECTED, e, upstream);
             }
+            // An appearance image the SDK cannot decode is the caller's data,
+            // not a fault in this service, and 1001 hides that completely.
+            if (describes(e, "Error reading PNG image data", "IIOException", "Unsupported Image Type")) {
+                log.error("[{}] An appearance image could not be decoded", job.requestId(), e);
+                throw new OrchestratorException(ErrorCode.APPEARANCE_IMAGE_UNREADABLE, e,
+                        job.config().appearanceTemplate() == null
+                                ? "the request's appearance" : job.config().appearanceTemplate());
+            }
             log.error("[{}] PAdES signing failed", job.requestId(), e);
             throw new OrchestratorException(ErrorCode.INTERNAL_ERROR, e);
         }
@@ -325,6 +333,20 @@ public class AdssSigningBackend implements SigningBackend {
      * reaches us. Finding that message in the cause chain is enough to tell an
      * upstream rejection apart from a fault in this service.
      */
+    /** {@code true} when any message in the cause chain contains one of {@code markers}. */
+    private static boolean describes(Throwable throwable, String... markers) {
+        for (Throwable t = throwable; t != null && t != t.getCause(); t = t.getCause()) {
+            String message = t.getMessage();
+            String type = t.getClass().getName();
+            for (String marker : markers) {
+                if ((message != null && message.contains(marker)) || type.contains(marker)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private static String upstreamHttpError(Throwable throwable) {
         for (Throwable t = throwable; t != null && t != t.getCause(); t = t.getCause()) {
             String message = t.getMessage();
