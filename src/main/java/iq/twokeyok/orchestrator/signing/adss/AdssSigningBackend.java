@@ -117,7 +117,7 @@ public class AdssSigningBackend implements SigningBackend {
     // Request construction
     // ------------------------------------------------------------------
 
-    private PdfSigningRequest buildRequest(SignJob job) throws Exception {
+    PdfSigningRequest buildRequest(SignJob job) throws Exception {
         EffectiveSignerConfig config = job.config();
         List<SignJob.SignDocument> documents = job.documents();
 
@@ -140,6 +140,14 @@ public class AdssSigningBackend implements SigningBackend {
         request.setLocalHash(config.localHash());
         request.setSignatureHash(config.computeHash());
         request.setHashAlgorithm(config.hashAlgorithm());
+        // Without a mode the SDK hashes locally in its legacy enveloping form:
+        // it writes SubFilter adbe.pkcs7.sha1 and sends a SHA-1 digest whatever
+        // the hash algorithm says. ADSS then signs that SHA-1 value under a
+        // SHA-256 SignerInfo, and every reader reports the signature invalid.
+        // The vendor's local-hash samples all set DETACHED for this reason.
+        if (config.localHash()) {
+            request.setPdfSignatureMode(PdfSigningRequest.SIGNATURE_MODE_DETACHED);
+        }
         request.setSignatureDictionarySize(config.signatureDictionarySize());
         request.setSigningField(config.signatureFieldName());
 
