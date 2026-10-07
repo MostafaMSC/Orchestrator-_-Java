@@ -222,17 +222,21 @@ public record SigningProperties(
     }
 
     /**
-     * The appearance table shared with the Ascertia Orchestrator: two columns,
-     * {@code template_id} (primary key) and {@code signatureappearance} (JSON).
-     * The orchestrator never creates or alters it; the account needs only
-     * SELECT, INSERT, UPDATE and DELETE.
+     * The appearance table: two columns, {@code template_id} (primary key) and
+     * {@code signatureappearance} (JSON), the same structure the Ascertia
+     * Orchestrator uses. By default it is this product's own table
+     * ({@code deploy/sql/twokeyok_appearancetemplate.sql}), so the Ascertia
+     * Orchestrator's templates are never touched; naming
+     * {@code appearancetemplate} instead shares that catalogue deliberately.
+     * The orchestrator never creates or alters the table; the account needs
+     * only SELECT, INSERT, UPDATE and DELETE.
      */
     public record AppearanceJdbc(
             /** e.g. {@code jdbc:postgresql://localhost:5432/orchestrator_eseal} */
             String url,
             String username,
             String password,
-            @DefaultValue("appearancetemplate") String table,
+            @DefaultValue("twokeyok_appearancetemplate") String table,
             /** How often another instance's (or the Ascertia Orchestrator's) changes are picked up. */
             @DefaultValue("30") int refreshSeconds,
             /** Copy the JSON files in store-path into the table once, while it is empty. */

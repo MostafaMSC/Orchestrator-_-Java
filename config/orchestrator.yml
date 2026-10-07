@@ -100,13 +100,17 @@ signing:
 
         # Where templates created through the API are kept:
         #   file — JSON files in store-path (default)
-        #   jdbc — the Ascertia Orchestrator's PostgreSQL table, shared with it
+        #   jdbc — a PostgreSQL table (create it first:
+        #          deploy/sql/twokeyok_appearancetemplate.sql)
         store: ${APPEARANCE_STORE:file}
         jdbc:
           url: ${APPEARANCE_DB_URL:jdbc:postgresql://localhost:5432/orchestrator_eseal}
           username: ${APPEARANCE_DB_USER:}
           password: ${APPEARANCE_DB_PASSWORD:}
-          table: appearancetemplate
+          # This product's own table, isolated from the Ascertia
+          # Orchestrator's 'appearancetemplate'. Naming that one instead would
+          # share one catalogue between both products.
+          table: twokeyok_appearancetemplate
           # Changes made by another instance or the Ascertia Orchestrator
           # appear within this many seconds.
           refresh-seconds: 30

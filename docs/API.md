@@ -257,8 +257,9 @@ Managed templates live in the appearance store (`appearance.store`):
   one per `template_id`. The API and the directory are the same store, so an
   operator can inspect, back up and hand-edit what callers create. Without a
   `store-path` the management endpoints return `1126`.
-* `jdbc` — the Ascertia Orchestrator's PostgreSQL `appearancetemplate` table,
-  shared with it. See `docs/CONFIGURATION.md` for what that format keeps.
+* `jdbc` — a PostgreSQL table, by default this product's own
+  `twokeyok_appearancetemplate`, in the Ascertia Orchestrator's JSON format. See
+  `docs/CONFIGURATION.md` for setting it up and what that format keeps.
 
 Create and update accept this product's template shape (`fields: {...}`) and
 the Ascertia Orchestrator's (`signed_by: {...}`, `company_logo: {enabled, value}`).

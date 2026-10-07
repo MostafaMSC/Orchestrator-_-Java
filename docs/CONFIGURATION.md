@@ -256,7 +256,7 @@ field and an explicit `width`/`height`. The two templates bundled in the jar are
 in this form and are used when neither source yields anything, so a fresh install
 still answers `appearances/list`.
 
-#### `store: jdbc` — the Ascertia Orchestrator's PostgreSQL table
+#### `store: jdbc` — a PostgreSQL table
 
 ```yaml
 signing:
@@ -268,14 +268,25 @@ signing:
           url: jdbc:postgresql://localhost:5432/orchestrator_eseal
           username: ${APPEARANCE_DB_USER}
           password: ${APPEARANCE_DB_PASSWORD}
-          table: appearancetemplate        # default
-          refresh-seconds: 30              # default
-          import-from-store-path: true     # default
+          table: twokeyok_appearancetemplate   # default
+          refresh-seconds: 30                  # default
+          import-from-store-path: true         # default
 ```
 
-The table is the one the Ascertia Orchestrator already uses —
-`template_id varchar(255) PRIMARY KEY, signatureappearance text` — and both
-products read and write it, so a template created in either appears in both.
+Create the table and the orchestrator's login first:
+
+```bash
+sudo -u postgres psql -d orchestrator_eseal -f deploy/sql/twokeyok_appearancetemplate.sql
+sudo -u postgres psql -c "\password twokeyok_appearance"
+```
+
+The table has the same structure as the Ascertia Orchestrator's
+`appearancetemplate` — `template_id varchar(255) PRIMARY KEY,
+signatureappearance text` — but is this product's own, so neither product can
+change the other's templates. The script also revokes any access the login has
+to `appearancetemplate`, so the isolation holds in the database, not only in
+configuration. Setting `table: appearancetemplate` instead shares one catalogue
+between both products on purpose.
 
 * **Format.** Rows are written in the Ascertia JSON shape: the YAML shape above
   as JSON, with `company_logo` as `{enabled, value}` and `background_color` in
