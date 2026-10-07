@@ -75,7 +75,12 @@ signing:
     # ----------------------------------------------------------------
     signature:
       compute_hash: true
-      local_hash: false
+      # Hash the PDF here and send ADSS only the digest; the document itself
+      # never leaves this host. The SDK creates the empty signature field from
+      # the appearance's signature_field box, so every template must carry one
+      # (or the PDF must already contain Signature1). server_side_id must stay
+      # unset: ADSS never sees the document, so it cannot draw its own appearance.
+      local_hash: true
       hash_algorithm: SHA384
       dictionary_size: 12000
       # PAdES_BASELINE_B | _T are produced by the ADSS signing profile;

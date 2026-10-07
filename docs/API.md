@@ -201,6 +201,7 @@ diagnostics.
 | 1120 | 500 | Configured `signature_level` is not a PDF level this orchestrator supports |
 | 1121 | 500 | An appearance image could not be read |
 | 1122 | 400 | No credential supplied and `default_credential_strategy` is `NONE` |
+| 1128 | 400 | `local_hash` is on, the PDF has no `signature_field_name` field, and no signature box was given to create one |
 
 ## Signature appearance management
 

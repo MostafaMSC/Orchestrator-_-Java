@@ -62,7 +62,11 @@ public enum ErrorCode {
     APPEARANCE_STORE_UNAVAILABLE(1126,
             "No writable appearance store is configured. Set signing.dss.signature.appearance.store-path",
             HttpStatus.INTERNAL_SERVER_ERROR),
-    APPEARANCE_NOT_WRITTEN(1127, "Signature appearance template [{0}] could not be stored", HttpStatus.INTERNAL_SERVER_ERROR);
+    APPEARANCE_NOT_WRITTEN(1127, "Signature appearance template [{0}] could not be stored", HttpStatus.INTERNAL_SERVER_ERROR),
+    SIGNATURE_FIELD_MISSING(1128,
+            "Local hashing needs the signature field [{0}]: the document does not contain it and no signature box "
+                    + "was given to create it. Send signature_appearance.signature_field or use a template with one",
+            HttpStatus.BAD_REQUEST);
 
     private final int code;
     private final String message;

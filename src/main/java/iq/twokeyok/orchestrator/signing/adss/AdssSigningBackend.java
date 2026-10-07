@@ -92,6 +92,14 @@ public class AdssSigningBackend implements SigningBackend {
                         upstream, e);
                 throw new OrchestratorException(ErrorCode.ADSS_REJECTED, e, upstream);
             }
+            // Under local_hash the SDK hashes around the named field before
+            // anything is sent; without the field, or a box to create it from,
+            // that fails here, and it is the request that is missing something.
+            if (config.localHash() && describes(e, "does not exist")) {
+                log.error("[{}] Local hashing found no signature field '{}' and no box to create it",
+                        job.requestId(), config.signatureFieldName(), e);
+                throw new OrchestratorException(ErrorCode.SIGNATURE_FIELD_MISSING, e, config.signatureFieldName());
+            }
             // An appearance image the SDK cannot decode is the caller's data,
             // not a fault in this service, and 1001 hides that completely.
             if (describes(e, "Error reading PNG image data", "IIOException", "Unsupported Image Type")) {
