@@ -126,6 +126,21 @@
             <version>${jasypt.version}</version>
         </dependency>
 
+        <!--
+            Appearance templates in the Ascertia Orchestrator's PostgreSQL table
+            (appearance.store: jdbc). Plain JDBC over a Hikari pool: no
+            spring-jdbc, so no DataSource auto-configuration fires for a
+            file-based deployment that has no database at all.
+        -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+        </dependency>
+
         <!-- ==================== ADSS Client SDK ==================== -->
         <!-- Not on Maven Central. Install it first: deploy/install-adss-sdk.sh -->
         <dependency>
@@ -244,6 +259,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- In-memory stand-in for PostgreSQL in the appearance store tests. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

@@ -98,6 +98,22 @@ signing:
         # merged with the templates declared below.
         store-path: ${ORCHESTRATOR_CONFIG_DIR:/etc/twokeyok/orchestrator}/appearances
 
+        # Where templates created through the API are kept:
+        #   file — JSON files in store-path (default)
+        #   jdbc — the Ascertia Orchestrator's PostgreSQL table, shared with it
+        store: ${APPEARANCE_STORE:file}
+        jdbc:
+          url: ${APPEARANCE_DB_URL:jdbc:postgresql://localhost:5432/orchestrator_eseal}
+          username: ${APPEARANCE_DB_USER:}
+          password: ${APPEARANCE_DB_PASSWORD:}
+          table: appearancetemplate
+          # Changes made by another instance or the Ascertia Orchestrator
+          # appear within this many seconds.
+          refresh-seconds: 30
+          # On first start with an empty table, copy the JSON files in
+          # store-path into it. The files are left in place.
+          import-from-store-path: true
+
         appearances:
           # --- Organisation e-seal ---------------------------------
           - template_id: eseal_signature_appearance

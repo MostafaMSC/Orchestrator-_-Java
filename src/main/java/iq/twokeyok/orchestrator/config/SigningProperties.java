@@ -198,16 +198,46 @@ public record SigningProperties(
             /** Optional directory of JSON templates, merged with the ones defined here. */
             String storePath,
             @DefaultValue("false") boolean reloadAlways,
-            List<AppearanceTemplateConfig> appearances) {
+            List<AppearanceTemplateConfig> appearances,
+            /**
+             * Where templates created through the API live: {@code file} (one
+             * JSON file per template in {@link #storePath()}) or {@code jdbc}
+             * (the Ascertia Orchestrator's PostgreSQL table, see {@link #jdbc()}).
+             */
+            @DefaultValue("file") String store,
+            @DefaultValue AppearanceJdbc jdbc) {
 
         /** {@code true} when ADSS owns the appearance and we only name it. */
         public boolean useServerSide() {
             return serverSideId != null && !serverSideId.isBlank();
         }
 
+        public boolean usesJdbc() {
+            return "jdbc".equalsIgnoreCase(store);
+        }
+
         public Appearance {
             appearances = appearances == null ? new ArrayList<>() : appearances;
         }
+    }
+
+    /**
+     * The appearance table shared with the Ascertia Orchestrator: two columns,
+     * {@code template_id} (primary key) and {@code signatureappearance} (JSON).
+     * The orchestrator never creates or alters it; the account needs only
+     * SELECT, INSERT, UPDATE and DELETE.
+     */
+    public record AppearanceJdbc(
+            /** e.g. {@code jdbc:postgresql://localhost:5432/orchestrator_eseal} */
+            String url,
+            String username,
+            String password,
+            @DefaultValue("appearancetemplate") String table,
+            /** How often another instance's (or the Ascertia Orchestrator's) changes are picked up. */
+            @DefaultValue("30") int refreshSeconds,
+            /** Copy the JSON files in store-path into the table once, while it is empty. */
+            @DefaultValue("true") boolean importFromStorePath,
+            @DefaultValue("4") int maxPoolSize) {
     }
 
     /**

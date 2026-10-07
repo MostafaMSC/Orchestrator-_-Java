@@ -244,13 +244,66 @@ signing:
 * `signer_role` is accepted but never drawn — the ADSS appearance document has no
   role field, so the value becomes the signature's signer role instead.
 
-### 2. JSON files in `store-path`
+### 2. The appearance store — templates created through the API
 
-For pixel-exact placement, a template may instead be a JSON file carrying a box
-per field and embedded Base64 images. Same field keys, plus `position` on each
+`appearance.store` decides where the appearance API reads and writes.
+
+#### `store: file` (default) — JSON files in `store-path`
+
+For pixel-exact placement, a template may be a JSON file carrying a box per
+field and embedded Base64 images. Same field keys, plus `position` on each
 field and an explicit `width`/`height`. The two templates bundled in the jar are
 in this form and are used when neither source yields anything, so a fresh install
 still answers `appearances/list`.
+
+#### `store: jdbc` — the Ascertia Orchestrator's PostgreSQL table
+
+```yaml
+signing:
+  dss:
+    signature:
+      appearance:
+        store: jdbc
+        jdbc:
+          url: jdbc:postgresql://localhost:5432/orchestrator_eseal
+          username: ${APPEARANCE_DB_USER}
+          password: ${APPEARANCE_DB_PASSWORD}
+          table: appearancetemplate        # default
+          refresh-seconds: 30              # default
+          import-from-store-path: true     # default
+```
+
+The table is the one the Ascertia Orchestrator already uses —
+`template_id varchar(255) PRIMARY KEY, signatureappearance text` — and both
+products read and write it, so a template created in either appears in both.
+
+* **Format.** Rows are written in the Ascertia JSON shape: the YAML shape above
+  as JSON, with `company_logo` as `{enabled, value}` and `background_color` in
+  place of `text_background_color`. Rows are read through the same layout as
+  YAML templates. A field with `enabled: false` is not drawn.
+* **What the shape cannot hold** is dropped on write: per-field positions and
+  fonts, image file names and the border. Text is laid out again from
+  `signature_text_position` when the row is read. Keep a template that needs
+  pixel-exact placement in `orchestrator.yml` or in a file store.
+* **No schema changes.** The orchestrator never creates or alters the table.
+  Give it its own account with `SELECT, INSERT, UPDATE, DELETE` on it.
+* **Images are Base64 only.** A value from the database or the API is never
+  read as a file path.
+* **Freshness.** The catalogue is re-read every `refresh-seconds`, so changes
+  made by another instance or by the Ascertia Orchestrator appear within that
+  time. If the database cannot be read, the last loaded templates stay in use
+  and signing carries on; the database is not needed to start.
+* **Migration.** With `import-from-store-path: true`, the JSON files in
+  `store-path` are copied into the table once, when it holds no rows at all.
+* **Clashes.** A `template_id` declared in `orchestrator.yml` wins over a row
+  with the same id; the row is then read-only through the API (`1125`).
+* **Placement and `local_hash`.** Several Ascertia rows carry no
+  `signature_field`. With `local_hash: true` such a template needs
+  `signature_appearance.signature_field` in the request, or signing fails with
+  `1128`.
+
+The appearance API accepts both template shapes on create and update, so a
+body written for the Ascertia Orchestrator can be sent here unchanged.
 
 ---
 

@@ -62,6 +62,18 @@ public final class AppearanceLayout {
      * @param configDir directory relative image paths are resolved against
      */
     public static AppearanceTemplate toTemplate(AppearanceTemplateConfig config, Path configDir) {
+        return toTemplate(config, configDir, true);
+    }
+
+    /**
+     * @param imagesMayBePaths {@code true} only for the operator's own
+     *                         configuration. A template that arrived through the
+     *                         API or the database carries Base64 alone: reading
+     *                         its image value as a path would let a caller copy
+     *                         any file the service can read into a template.
+     */
+    public static AppearanceTemplate toTemplate(AppearanceTemplateConfig config, Path configDir,
+                                                boolean imagesMayBePaths) {
         int width = config.signatureField() != null && config.signatureField().width() > 0
                 ? config.signatureField().width() : 200;
         int height = config.signatureField() != null && config.signatureField().height() > 0
@@ -69,8 +81,12 @@ public final class AppearanceLayout {
 
         Font font = font(config.textFont());
         Map<String, TextField> text = textFields(config);
-        String logo = loadImage(config.companyLogo(), configDir, config.templateId(), "company_logo");
-        String hand = loadImage(config.handSignature(), configDir, config.templateId(), "hand_signature");
+        String logo = imagesMayBePaths
+                ? loadImage(config.companyLogo(), configDir, config.templateId(), "company_logo")
+                : base64Only(config.companyLogo(), config.templateId(), "company_logo");
+        String hand = imagesMayBePaths
+                ? loadImage(config.handSignature(), configDir, config.templateId(), "hand_signature")
+                : base64Only(config.handSignature(), config.templateId(), "hand_signature");
         boolean hasImage = logo != null || hand != null;
 
         Regions regions = split(config.signatureTextPosition(), width, height, hasImage);
@@ -228,6 +244,20 @@ public final class AppearanceLayout {
         }
     }
 
+    private static String base64Only(SigningProperties.Image image, String templateId, String field) {
+        if (image == null || image.value() == null || image.value().isBlank()) {
+            return null;
+        }
+        String value = image.value().trim();
+        try {
+            Base64.getMimeDecoder().decode(value);
+            return value;
+        } catch (IllegalArgumentException e) {
+            log.error("Appearance '{}' field '{}': the image is not Base64 and is ignored", templateId, field);
+            return null;
+        }
+    }
+
     /** A path has an extension and no Base64 padding; anything long and opaque is data. */
     private static boolean looksLikeBase64(String value) {
         if (value.length() < 128) {
@@ -239,7 +269,8 @@ public final class AppearanceLayout {
 
     private static String imageName(SigningProperties.Image image, String fallback) {
         if (image == null || image.name() == null || image.name().isBlank()) {
-            if (image != null && image.value() != null && !looksLikeBase64(image.value())) {
+            if (image != null && image.value() != null && !looksLikeBase64(image.value())
+                    && image.value().length() < 512) {
                 return Path.of(image.value()).getFileName().toString();
             }
             return fallback;

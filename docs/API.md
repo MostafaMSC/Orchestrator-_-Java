@@ -251,10 +251,17 @@ curl -u 'client:secret' -F 'input_files=@document.pdf' \
 
 ### Where templates live, and which can be changed
 
-Managed templates are JSON files in `signing.dss.signature.appearance.store-path`,
-one per `template_id` - the API and the directory are the same store, so an
-operator can inspect, back up and hand-edit what callers create. Without a
-`store-path` the management endpoints return `1126`.
+Managed templates live in the appearance store (`appearance.store`):
+
+* `file` (default) — JSON files in `signing.dss.signature.appearance.store-path`,
+  one per `template_id`. The API and the directory are the same store, so an
+  operator can inspect, back up and hand-edit what callers create. Without a
+  `store-path` the management endpoints return `1126`.
+* `jdbc` — the Ascertia Orchestrator's PostgreSQL `appearancetemplate` table,
+  shared with it. See `docs/CONFIGURATION.md` for what that format keeps.
+
+Create and update accept this product's template shape (`fields: {...}`) and
+the Ascertia Orchestrator's (`signed_by: {...}`, `company_logo: {enabled, value}`).
 
 Templates declared in `orchestrator.yml` are listed and usable but **cannot be
 changed or deleted through the API** (`1125`): that file belongs to whoever

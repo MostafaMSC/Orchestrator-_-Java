@@ -2,6 +2,9 @@ package iq.twokeyok.orchestrator.web;
 
 import java.util.List;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +20,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import iq.twokeyok.orchestrator.appearance.AppearanceService;
 import iq.twokeyok.orchestrator.appearance.AppearanceTemplate;
+import iq.twokeyok.orchestrator.appearance.AscertiaAppearanceCodec;
+import iq.twokeyok.orchestrator.error.ErrorCode;
+import iq.twokeyok.orchestrator.error.OrchestratorException;
 import iq.twokeyok.orchestrator.web.dto.AppearanceTemplateView;
 
 /**
@@ -46,9 +52,11 @@ import iq.twokeyok.orchestrator.web.dto.AppearanceTemplateView;
 public class AppearanceController {
 
     private final AppearanceService appearanceService;
+    private final AscertiaAppearanceCodec ascertiaCodec;
 
-    public AppearanceController(AppearanceService appearanceService) {
+    public AppearanceController(AppearanceService appearanceService, AscertiaAppearanceCodec ascertiaCodec) {
         this.appearanceService = appearanceService;
+        this.ascertiaCodec = ascertiaCodec;
     }
 
     /**
@@ -88,16 +96,27 @@ public class AppearanceController {
         return appearanceService.get(templateId);
     }
 
+    /**
+     * Accepts this product's template shape ({@code fields: {...}}) and the
+     * Ascertia Orchestrator's ({@code signed_by: {...}}, {@code company_logo:
+     * {enabled, value}}), so a caller of either API can create templates here.
+     */
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<AppearanceTemplate> createOrUpdate(@RequestBody AppearanceTemplate template) {
+    public ResponseEntity<AppearanceTemplate> createOrUpdate(@RequestBody JsonNode body) {
+        AppearanceTemplate template;
+        try {
+            template = ascertiaCodec.fromNode(body);
+        } catch (JsonProcessingException e) {
+            throw new OrchestratorException(ErrorCode.INVALID_APPEARANCE, e);
+        }
         AppearanceService.Saved saved = appearanceService.save(template);
         return ResponseEntity.status(saved.created() ? HttpStatus.CREATED : HttpStatus.OK)
                 .body(saved.template());
     }
 
     @PutMapping(consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<AppearanceTemplate> update(@RequestBody AppearanceTemplate template) {
-        return createOrUpdate(template);
+    public ResponseEntity<AppearanceTemplate> update(@RequestBody JsonNode body) {
+        return createOrUpdate(body);
     }
 
     @DeleteMapping(path = "/{templateId}")
