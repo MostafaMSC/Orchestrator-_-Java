@@ -42,9 +42,20 @@ public class TimestampValidationData {
     private static final Logger log = LoggerFactory.getLogger(TimestampValidationData.class);
 
     private final OcspClient ocsp;
+    private final String configuredOcspUrl;
 
     public TimestampValidationData(OcspClient ocsp) {
+        this(ocsp, null);
+    }
+
+    /**
+     * @param configuredOcspUrl {@code signing.dss.ocsp.url}; asked first for a
+     *                          certificate that names no responder itself
+     */
+    public TimestampValidationData(OcspClient ocsp, String configuredOcspUrl) {
         this.ocsp = ocsp;
+        this.configuredOcspUrl = configuredOcspUrl == null || configuredOcspUrl.isBlank()
+                ? null : configuredOcspUrl.trim();
     }
 
     /**
@@ -58,6 +69,7 @@ public class TimestampValidationData {
 
         Map<String, byte[]> certificates = new LinkedHashMap<>();
         List<byte[]> responses = new ArrayList<>();
+        List<String> fallbackUrls = fallbackUrls(chain);
         try {
             for (X509CertificateHolder certificate : chain) {
                 put(certificates, certificate);
@@ -70,7 +82,7 @@ public class TimestampValidationData {
                             requestId, certificate.getSubject());
                     continue;
                 }
-                Optional<OcspClient.Answer> answer = ocsp.check(certificate, issuer.get());
+                Optional<OcspClient.Answer> answer = ocsp.check(certificate, issuer.get(), fallbackUrls);
                 if (answer.isPresent()) {
                     responses.add(answer.get().encoded());
                     put(certificates, answer.get().responder());
@@ -97,6 +109,22 @@ public class TimestampValidationData {
                     requestId, e.getMessage());
             return pdf;
         }
+    }
+
+    /**
+     * Where to ask about a certificate that names no responder: the configured
+     * OCSP service first, then the responders the rest of the chain names - a
+     * PKI usually runs one responder for all of its CAs.
+     */
+    private List<String> fallbackUrls(Collection<X509CertificateHolder> chain) {
+        java.util.LinkedHashSet<String> urls = new java.util.LinkedHashSet<>();
+        if (configuredOcspUrl != null) {
+            urls.add(configuredOcspUrl);
+        }
+        for (X509CertificateHolder certificate : chain) {
+            OcspClient.ocspUrl(certificate).ifPresent(urls::add);
+        }
+        return List.copyOf(urls);
     }
 
     private static Optional<X509CertificateHolder> issuerOf(X509CertificateHolder certificate,

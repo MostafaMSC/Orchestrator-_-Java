@@ -109,10 +109,13 @@ class DocumentTimestamperTest {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         String base = "http://127.0.0.1:" + server.getAddress().getPort();
 
-        // A root CA issues the TSA certificate, which names the CA's OCSP
-        // responder, as the staging TSA's certificate does.
+        // The staging shape: a root issues an intermediate that names no OCSP
+        // responder, which issues the TSA certificate that does name one. The
+        // one responder answers for both CAs.
+        KeyPair rootKeys = keys();
+        X509Certificate rootCert = certificate("CN=Test TSA Root", rootKeys, null, rootKeys, true, false, null);
         KeyPair caKeys = keys();
-        X509Certificate caCert = certificate("CN=Test TSA Root", caKeys, null, caKeys, true, false, null);
+        X509Certificate caCert = certificate("CN=Test TSA CA", caKeys, rootCert, rootKeys, true, false, null);
         KeyPair tsaKeys = keys();
         tsaCert = certificate("CN=Test TSA", tsaKeys, caCert, caKeys, false, true, base + "/ocsp");
 
@@ -121,10 +124,11 @@ class DocumentTimestamperTest {
                 new JcaDigestCalculatorProviderBuilder().build().get(
                         new org.bouncycastle.asn1.x509.AlgorithmIdentifier(NISTObjectIdentifiers.id_sha256)),
                 new ASN1ObjectIdentifier(POLICY));
-        tokens.addCertificates(new JcaCertStore(List.of(tsaCert, caCert)));
+        tokens.addCertificates(new JcaCertStore(List.of(tsaCert, caCert, rootCert)));
         TimeStampResponseGenerator responses = new TimeStampResponseGenerator(tokens, TSPAlgorithms.ALLOWED);
 
         X509CertificateHolder caHolder = new X509CertificateHolder(caCert.getEncoded());
+        X509CertificateHolder rootHolder = new X509CertificateHolder(rootCert.getEncoded());
         server.createContext("/ocsp", exchange -> {
             try (InputStream in = exchange.getRequestBody()) {
                 if (ocspMode.get() == Ocsp.DOWN) {
@@ -132,15 +136,20 @@ class DocumentTimestamperTest {
                     return;
                 }
                 OCSPReq request = new OCSPReq(in.readAllBytes());
-                BasicOCSPRespBuilder builder = new BasicOCSPRespBuilder(new RespID(caHolder.getSubject()));
+                // Answer as whichever CA issued the certificate asked about.
+                boolean forIntermediate = request.getRequestList()[0].getCertID()
+                        .matchesIssuer(rootHolder, new JcaDigestCalculatorProviderBuilder().build());
+                X509CertificateHolder signerHolder = forIntermediate ? rootHolder : caHolder;
+                KeyPair signerPair = forIntermediate ? rootKeys : caKeys;
+                BasicOCSPRespBuilder builder = new BasicOCSPRespBuilder(new RespID(signerHolder.getSubject()));
                 for (Req single : request.getRequestList()) {
                     builder.addResponse(single.getCertID(), ocspMode.get() == Ocsp.GOOD
                             ? CertificateStatus.GOOD
                             : new RevokedStatus(new Date(), CRLReason.keyCompromise));
                 }
                 BasicOCSPResp basic = builder.build(
-                        new JcaContentSignerBuilder("SHA256withRSA").build(caKeys.getPrivate()),
-                        new X509CertificateHolder[] {caHolder}, new Date());
+                        new JcaContentSignerBuilder("SHA256withRSA").build(signerPair.getPrivate()),
+                        new X509CertificateHolder[] {signerHolder}, new Date());
                 byte[] reply = new OCSPRespBuilder().build(OCSPRespBuilder.SUCCESSFUL, basic).getEncoded();
                 exchange.getResponseHeaders().add("Content-Type", "application/ocsp-response");
                 exchange.sendResponseHeaders(200, reply.length);
@@ -209,16 +218,20 @@ class DocumentTimestamperTest {
             assertThat(dss).as("/DSS present").isNotNull();
             COSArray ocsps = (COSArray) dss.getDictionaryObject(COSName.getPDFName("OCSPs"));
             COSArray certs = (COSArray) dss.getDictionaryObject(COSName.getPDFName("Certs"));
-            assertThat(ocsps.size()).as("one OCSP response, for the TSA certificate").isEqualTo(1);
-            assertThat(certs.size()).as("TSA certificate and its CA").isEqualTo(2);
+            assertThat(ocsps.size())
+                    .as("the TSA certificate, and its CA through the fallback responder").isEqualTo(2);
+            assertThat(certs.size()).as("TSA certificate, intermediate and root").isEqualTo(3);
 
-            byte[] response;
-            try (InputStream in = ((COSStream) ocsps.getObject(0)).createInputStream()) {
-                response = in.readAllBytes();
+            List<BigInteger> covered = new java.util.ArrayList<>();
+            for (int i = 0; i < ocsps.size(); i++) {
+                try (InputStream in = ((COSStream) ocsps.getObject(i)).createInputStream()) {
+                    SingleResp single = ((BasicOCSPResp) new OCSPResp(in.readAllBytes()).getResponseObject())
+                            .getResponses()[0];
+                    assertThat(single.getCertStatus()).isEqualTo(CertificateStatus.GOOD);
+                    covered.add(single.getCertID().getSerialNumber());
+                }
             }
-            SingleResp single = ((BasicOCSPResp) new OCSPResp(response).getResponseObject()).getResponses()[0];
-            assertThat(single.getCertID().getSerialNumber()).isEqualTo(tsaCert.getSerialNumber());
-            assertThat(single.getCertStatus()).isEqualTo(CertificateStatus.GOOD);
+            assertThat(covered).contains(tsaCert.getSerialNumber());
         }
         Path file = Files.write(dir.resolve("stamped-ltv.pdf"), stamped);
         assertThat(PdfSignatureInspector.inspect(file.toString()))

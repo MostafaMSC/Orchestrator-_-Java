@@ -6,6 +6,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.Optional;
 
 import org.bouncycastle.asn1.x509.AccessDescription;
@@ -49,7 +50,13 @@ public class OcspClient {
 
     public OcspClient(int timeoutMs) {
         this.timeout = Duration.ofMillis(Math.max(1000, timeoutMs));
-        this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
+        // HTTP/1.1 only. On a plain http:// URL the JDK client otherwise asks to
+        // upgrade to HTTP/2 (h2c), and the staging responder answers that by
+        // closing the connection: "HTTP/1.1 header parser received no bytes".
+        this.http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(timeout)
+                .build();
     }
 
     /** @return the OCSP URL in the certificate, if it names one */
@@ -68,22 +75,42 @@ public class OcspClient {
     }
 
     /**
-     * @return the response, when the responder vouches that {@code certificate}
-     *         is good; empty when there is no responder or the answer is not usable
+     * @param fallbackUrls responders to ask, in order, when the certificate names
+     *                     none itself - a CA certificate often carries no
+     *                     Authority Information Access although a responder for
+     *                     it exists
+     * @return the response, when a responder vouches that {@code certificate}
+     *         is good; empty when there is no responder or no usable answer
      */
-    public Optional<Answer> check(X509CertificateHolder certificate, X509CertificateHolder issuer) {
-        Optional<String> url = ocspUrl(certificate);
-        if (url.isEmpty()) {
-            log.debug("No OCSP responder named in {}", certificate.getSubject());
-            return Optional.empty();
+    public Optional<Answer> check(X509CertificateHolder certificate, X509CertificateHolder issuer,
+                                  List<String> fallbackUrls) {
+        Optional<String> named = ocspUrl(certificate);
+        if (named.isPresent()) {
+            return check(certificate, issuer, named.get());
         }
+        for (String url : fallbackUrls) {
+            Optional<Answer> answer = check(certificate, issuer, url);
+            if (answer.isPresent()) {
+                log.debug("{} names no OCSP responder; {} answered for it", certificate.getSubject(), url);
+                return answer;
+            }
+        }
+        log.debug("No OCSP responder answered for {}", certificate.getSubject());
+        return Optional.empty();
+    }
+
+    public Optional<Answer> check(X509CertificateHolder certificate, X509CertificateHolder issuer) {
+        return check(certificate, issuer, List.of());
+    }
+
+    private Optional<Answer> check(X509CertificateHolder certificate, X509CertificateHolder issuer, String url) {
         try {
             CertificateID id = new CertificateID(
                     new JcaDigestCalculatorProviderBuilder().build().get(CertificateID.HASH_SHA1),
                     issuer, certificate.getSerialNumber());
             byte[] request = new OCSPReqBuilder().addRequest(id).build().getEncoded();
 
-            HttpResponse<byte[]> reply = http.send(HttpRequest.newBuilder(URI.create(url.get()))
+            HttpResponse<byte[]> reply = http.send(HttpRequest.newBuilder(URI.create(url))
                             .timeout(timeout)
                             .header("Content-Type", "application/ocsp-request")
                             .header("Accept", "application/ocsp-response")
@@ -91,14 +118,14 @@ public class OcspClient {
                             .build(),
                     HttpResponse.BodyHandlers.ofByteArray());
             if (reply.statusCode() != 200) {
-                log.warn("OCSP responder {} answered HTTP {} for {}", url.get(), reply.statusCode(),
+                log.warn("OCSP responder {} answered HTTP {} for {}", url, reply.statusCode(),
                         certificate.getSubject());
                 return Optional.empty();
             }
 
             OCSPResp response = new OCSPResp(reply.body());
             if (response.getStatus() != OCSPResp.SUCCESSFUL) {
-                log.warn("OCSP responder {} refused the request for {} (status {})", url.get(),
+                log.warn("OCSP responder {} refused the request for {} (status {})", url,
                         certificate.getSubject(), response.getStatus());
                 return Optional.empty();
             }
@@ -120,17 +147,17 @@ public class OcspClient {
                     return Optional.of(new Answer(response.getEncoded(), responder));
                 }
             }
-            log.warn("OCSP response from {} does not cover {}", url.get(), certificate.getSubject());
+            log.warn("OCSP response from {} does not cover {}", url, certificate.getSubject());
             return Optional.empty();
         } catch (IOException e) {
-            log.warn("OCSP responder {} is not reachable for {}: {}", url.get(), certificate.getSubject(),
+            log.warn("OCSP responder {} is not reachable for {}: {}", url, certificate.getSubject(),
                     e.getMessage());
             return Optional.empty();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return Optional.empty();
         } catch (Exception e) {
-            log.warn("OCSP response from {} for {} cannot be used: {}", url.get(), certificate.getSubject(),
+            log.warn("OCSP response from {} for {} cannot be used: {}", url, certificate.getSubject(),
                     e.getMessage());
             return Optional.empty();
         }

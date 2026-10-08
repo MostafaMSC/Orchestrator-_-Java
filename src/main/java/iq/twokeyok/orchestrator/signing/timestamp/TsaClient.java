@@ -78,7 +78,10 @@ public class TsaClient {
                     + ", not " + hashAlgorithm);
         }
         this.timeout = Duration.ofMillis(Math.max(1000, timeoutMs));
+        // HTTP/1.1 only, as for OCSP: an h2c upgrade offer on a plain http://
+        // TSA URL gets the connection dropped by servers that do not speak it.
         this.http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(this.timeout)
                 .sslContext(sslContext(truststorePath, truststorePassword))
                 .build();
