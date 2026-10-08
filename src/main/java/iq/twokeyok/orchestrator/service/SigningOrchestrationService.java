@@ -30,6 +30,7 @@ import iq.twokeyok.orchestrator.signing.SignJob.SignDocument;
 import iq.twokeyok.orchestrator.signing.SignJob.SignResult;
 import iq.twokeyok.orchestrator.signing.SignerResolver;
 import iq.twokeyok.orchestrator.signing.SigningBackend;
+import iq.twokeyok.orchestrator.signing.timestamp.DocumentTimestamper;
 import iq.twokeyok.orchestrator.web.dto.SignatureAppearanceRequest;
 
 /**
@@ -58,6 +59,7 @@ public class SigningOrchestrationService {
     private final AppearanceService appearanceService;
     private final SigningBackend signingBackend;
     private final ContainerPackager packager;
+    private final DocumentTimestamper documentTimestamper;
     private final AuditLogger audit;
     private final ObjectMapper objectMapper;
     private final Semaphore concurrency;
@@ -67,6 +69,7 @@ public class SigningOrchestrationService {
                                        AppearanceService appearanceService,
                                        SigningBackend signingBackend,
                                        ContainerPackager packager,
+                                       DocumentTimestamper documentTimestamper,
                                        AuditLogger audit,
                                        ObjectMapper objectMapper) {
         this.properties = properties;
@@ -74,6 +77,7 @@ public class SigningOrchestrationService {
         this.appearanceService = appearanceService;
         this.signingBackend = signingBackend;
         this.packager = packager;
+        this.documentTimestamper = documentTimestamper;
         this.audit = audit;
         this.objectMapper = objectMapper;
         this.concurrency = new Semaphore(Math.max(1, properties.limits().maxConcurrentSigningRequests()), true);
@@ -109,7 +113,12 @@ public class SigningOrchestrationService {
         }
         try {
             SignResult result = signingBackend.signPades(job);
-            ContainerPackager.Payload payload = packager.pack(result.documents(), config.containerType());
+            // The archive timestamp covers the finished signature, so it is
+            // added after the backend and before anything is packaged.
+            List<SignJob.SignResult.SignedDocument> signed = documentTimestamper.isEnabled()
+                    ? documentTimestamper.timestampAll(result.documents(), requestId)
+                    : result.documents();
+            ContainerPackager.Payload payload = packager.pack(signed, config.containerType());
             audit.signed(requestId, caller, config, documents.size(), result.transactionId(),
                     System.currentTimeMillis() - startedAt);
             return payload;

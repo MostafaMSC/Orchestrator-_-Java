@@ -66,7 +66,9 @@ public enum ErrorCode {
     SIGNATURE_FIELD_MISSING(1128,
             "Local hashing needs the signature field [{0}]: the document does not contain it and no signature box "
                     + "was given to create it. Send signature_appearance.signature_field or use a template with one",
-            HttpStatus.BAD_REQUEST);
+            HttpStatus.BAD_REQUEST),
+    TSA_UNAVAILABLE(1129, "The timestamp authority is not reachable: {0}", HttpStatus.BAD_GATEWAY),
+    TSA_REJECTED(1130, "The timestamp authority did not grant a timestamp: {0}", HttpStatus.BAD_GATEWAY);
 
     private final int code;
     private final String message;

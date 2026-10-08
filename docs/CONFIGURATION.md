@@ -92,7 +92,9 @@ quietly ignored.
 | `verification.url` / `profile_id` / `client_id` | — | Required for LT/LTA. |
 | `ras.keystore_path` / `keystore_password` | — | Client certificate presented to ADSS and RAS. |
 | `truststore_path` / `truststore_password` | — | Trust for the ADSS server certificates. JKS or PKCS12. |
-| `dss.tsa.url` / `policy_id` | — | Required for LT/LTA. |
+| `dss.tsa.url` / `policy_id` | — | Required for LT/LTA, and for `document_timestamp`. |
+| `dss.tsa.document_timestamp` | `false` | Append a PAdES document timestamp from this TSA to every signed PDF. See below. |
+| `dss.tsa.hash_algorithm` / `timeout_ms` | `SHA256` / `30000` | Digest sent to the TSA for the document timestamp, and the per-call timeout. |
 | `default_credential_strategy` | `LATEST` | See below. |
 | `basic_auth_type` | `implicit` | What `Authorization: Basic` carries. `implicit` — the signer's own id and credential password, as the Ascertia Orchestrator expects. `client_credentials` — an application's client id and secret from `csc-config.registered-clients`. See docs/API.md. |
 | `debug-mode` | `false` | Turns on verbose SDK HTTP logging. Never in production. |
@@ -101,6 +103,27 @@ quietly ignored.
 > a request thread while it waits, so the budget must stay comfortably below the
 > caller's own HTTP timeout, and `limits.max-concurrent-signing-requests` bounds
 > how many may wait at once.
+
+### `dss.tsa.document_timestamp`
+
+With `true`, once ADSS has returned the signed PDF the orchestrator calls the
+TSA itself and appends the token as a document timestamp: an incremental update
+holding a `/Type /DocTimeStamp` signature with `/SubFilter /ETSI.RFC3161`. This
+is the archive timestamp a PAdES-LTA document carries, and the one the Ascertia
+Orchestrator's output shows as its second signature.
+
+* Only a digest of the signed PDF goes to the TSA, never the document.
+* The reply is checked before use: status granted, imprint and nonce match the
+  request, and the policy is `policy_id` when one is set.
+* The existing signature is untouched. An incremental update only appends
+  bytes, so its ByteRange still covers what it did.
+* TLS to the TSA trusts the JVM's authorities plus `truststore_path`.
+* If the TSA cannot be reached (`1129`) or refuses (`1130`), the request fails.
+  A document configured to carry a timestamp is never returned without one.
+* It does not add a `/DSS` revocation store. That is a separate step, needed
+  for full PAdES-LTA.
+
+`--verify-pdf` reports the result as *Document timestamp … PASS*.
 
 ### `default_credential_strategy`
 

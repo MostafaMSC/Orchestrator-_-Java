@@ -66,6 +66,12 @@ signing:
     tsa:
       url: ${ADSS_TSA_URL:https://adss-tsa.internal.example:8778/adss/tsa}
       policy_id: '2.16.368.1.2.1.6'
+      # After ADSS returns the signature, call this TSA directly and append its
+      # token as a PAdES document timestamp (ETSI.RFC3161). Only a digest of
+      # the signed PDF is sent. A TSA failure fails the request (1129 / 1130).
+      document_timestamp: false
+      hash_algorithm: SHA256
+      timeout_ms: 30000
     ocsp:
       url: ${ADSS_OCSP_URL:http://adss-ocsp.internal.example/adss/ocsp}
       hash_algorithm: SHA1

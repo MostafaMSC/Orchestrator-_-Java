@@ -202,6 +202,8 @@ diagnostics.
 | 1121 | 500 | An appearance image could not be read |
 | 1122 | 400 | No credential supplied and `default_credential_strategy` is `NONE` |
 | 1128 | 400 | `local_hash` is on, the PDF has no `signature_field_name` field, and no signature box was given to create one |
+| 1129 | 502 | `document_timestamp` is on and the TSA is not reachable |
+| 1130 | 502 | `document_timestamp` is on and the TSA refused, or returned a token that does not match the request |
 
 ## Signature appearance management
 

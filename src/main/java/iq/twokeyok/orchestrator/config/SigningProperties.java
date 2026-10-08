@@ -301,7 +301,20 @@ public record SigningProperties(
     public record Image(String value, String name) {
     }
 
-    public record Tsa(String url, String policyId) {
+    /**
+     * The RFC 3161 Time Stamping Authority.
+     *
+     * <p>ADSS uses {@link #url()} for signature timestamps during LT/LTA
+     * upgrades. With {@link #documentTimestamp()} on, the orchestrator also calls
+     * it directly once the signature is back, and appends the token to the PDF
+     * as a PAdES document timestamp ({@code /SubFilter /ETSI.RFC3161}). Only a
+     * digest of the signed PDF is sent.</p>
+     */
+    public record Tsa(String url,
+                      String policyId,
+                      @DefaultValue("false") boolean documentTimestamp,
+                      @DefaultValue("SHA256") String hashAlgorithm,
+                      @DefaultValue("30000") int timeoutMs) {
     }
 
     public record Ocsp(String url, @DefaultValue("SHA1") String hashAlgorithm) {
