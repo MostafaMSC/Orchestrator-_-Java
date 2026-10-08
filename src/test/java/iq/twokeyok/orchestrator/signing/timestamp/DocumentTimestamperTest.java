@@ -18,8 +18,26 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import com.sun.net.httpserver.HttpServer;
 
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature;
+import org.bouncycastle.asn1.x509.AccessDescription;
+import org.bouncycastle.asn1.x509.AuthorityInformationAccess;
+import org.bouncycastle.asn1.x509.CRLReason;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.cert.ocsp.BasicOCSPResp;
+import org.bouncycastle.cert.ocsp.BasicOCSPRespBuilder;
+import org.bouncycastle.cert.ocsp.CertificateStatus;
+import org.bouncycastle.cert.ocsp.OCSPReq;
+import org.bouncycastle.cert.ocsp.OCSPResp;
+import org.bouncycastle.cert.ocsp.OCSPRespBuilder;
+import org.bouncycastle.cert.ocsp.Req;
+import org.bouncycastle.cert.ocsp.RespID;
+import org.bouncycastle.cert.ocsp.RevokedStatus;
+import org.bouncycastle.cert.ocsp.SingleResp;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.nist.NISTObjectIdentifiers;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -69,9 +87,14 @@ class DocumentTimestamperTest {
     /** How the fake TSA answers the next request. */
     enum Mode { GRANT, REJECT, WRONG_IMPRINT }
 
+    /** How the fake OCSP responder answers the next request. */
+    enum Ocsp { GOOD, REVOKED, DOWN }
+
     private static final AtomicReference<Mode> mode = new AtomicReference<>(Mode.GRANT);
+    private static final AtomicReference<Ocsp> ocspMode = new AtomicReference<>(Ocsp.GOOD);
     private static HttpServer server;
     private static String tsaUrl;
+    private static X509Certificate tsaCert;
     private static KeyPair signerKeys;
     private static X509Certificate signerCert;
 
@@ -83,17 +106,51 @@ class DocumentTimestamperTest {
         if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
             Security.addProvider(new BouncyCastleProvider());
         }
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+
+        // A root CA issues the TSA certificate, which names the CA's OCSP
+        // responder, as the staging TSA's certificate does.
+        KeyPair caKeys = keys();
+        X509Certificate caCert = certificate("CN=Test TSA Root", caKeys, null, caKeys, true, false, null);
         KeyPair tsaKeys = keys();
-        X509Certificate tsaCert = certificate("CN=Test TSA", tsaKeys, true);
+        tsaCert = certificate("CN=Test TSA", tsaKeys, caCert, caKeys, false, true, base + "/ocsp");
+
         TimeStampTokenGenerator tokens = new TimeStampTokenGenerator(
                 new JcaSimpleSignerInfoGeneratorBuilder().build("SHA256withRSA", tsaKeys.getPrivate(), tsaCert),
                 new JcaDigestCalculatorProviderBuilder().build().get(
                         new org.bouncycastle.asn1.x509.AlgorithmIdentifier(NISTObjectIdentifiers.id_sha256)),
                 new ASN1ObjectIdentifier(POLICY));
-        tokens.addCertificates(new JcaCertStore(List.of(tsaCert)));
+        tokens.addCertificates(new JcaCertStore(List.of(tsaCert, caCert)));
         TimeStampResponseGenerator responses = new TimeStampResponseGenerator(tokens, TSPAlgorithms.ALLOWED);
 
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        X509CertificateHolder caHolder = new X509CertificateHolder(caCert.getEncoded());
+        server.createContext("/ocsp", exchange -> {
+            try (InputStream in = exchange.getRequestBody()) {
+                if (ocspMode.get() == Ocsp.DOWN) {
+                    exchange.sendResponseHeaders(503, -1);
+                    return;
+                }
+                OCSPReq request = new OCSPReq(in.readAllBytes());
+                BasicOCSPRespBuilder builder = new BasicOCSPRespBuilder(new RespID(caHolder.getSubject()));
+                for (Req single : request.getRequestList()) {
+                    builder.addResponse(single.getCertID(), ocspMode.get() == Ocsp.GOOD
+                            ? CertificateStatus.GOOD
+                            : new RevokedStatus(new Date(), CRLReason.keyCompromise));
+                }
+                BasicOCSPResp basic = builder.build(
+                        new JcaContentSignerBuilder("SHA256withRSA").build(caKeys.getPrivate()),
+                        new X509CertificateHolder[] {caHolder}, new Date());
+                byte[] reply = new OCSPRespBuilder().build(OCSPRespBuilder.SUCCESSFUL, basic).getEncoded();
+                exchange.getResponseHeaders().add("Content-Type", "application/ocsp-response");
+                exchange.sendResponseHeaders(200, reply.length);
+                exchange.getResponseBody().write(reply);
+            } catch (Exception e) {
+                exchange.sendResponseHeaders(500, -1);
+            } finally {
+                exchange.close();
+            }
+        });
         server.createContext("/tsa", exchange -> {
             try (InputStream in = exchange.getRequestBody()) {
                 TimeStampRequest request = new TimeStampRequest(in.readAllBytes());
@@ -122,10 +179,10 @@ class DocumentTimestamperTest {
             }
         });
         server.start();
-        tsaUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/tsa";
+        tsaUrl = base + "/tsa";
 
         signerKeys = keys();
-        signerCert = certificate("CN=Test e-Seal", signerKeys, false);
+        signerCert = certificate("CN=Test e-Seal", signerKeys, null, signerKeys, false, false, null);
     }
 
     @AfterAll
@@ -136,6 +193,54 @@ class DocumentTimestamperTest {
     @BeforeEach
     void grantByDefault() {
         mode.set(Mode.GRANT);
+        ocspMode.set(Ocsp.GOOD);
+    }
+
+    @Test
+    void addsTheTsaValidationDataSoReadersNeedNotGoOnline() throws Exception {
+        byte[] signed = signedPdf();
+
+        byte[] stamped = timestamperWithValidationData().timestamp(signed, "test");
+
+        assertThat(Arrays.copyOf(stamped, signed.length)).isEqualTo(signed);
+        try (PDDocument document = PDDocument.load(stamped)) {
+            COSDictionary dss = (COSDictionary) document.getDocumentCatalog().getCOSObject()
+                    .getDictionaryObject(COSName.getPDFName("DSS"));
+            assertThat(dss).as("/DSS present").isNotNull();
+            COSArray ocsps = (COSArray) dss.getDictionaryObject(COSName.getPDFName("OCSPs"));
+            COSArray certs = (COSArray) dss.getDictionaryObject(COSName.getPDFName("Certs"));
+            assertThat(ocsps.size()).as("one OCSP response, for the TSA certificate").isEqualTo(1);
+            assertThat(certs.size()).as("TSA certificate and its CA").isEqualTo(2);
+
+            byte[] response;
+            try (InputStream in = ((COSStream) ocsps.getObject(0)).createInputStream()) {
+                response = in.readAllBytes();
+            }
+            SingleResp single = ((BasicOCSPResp) new OCSPResp(response).getResponseObject()).getResponses()[0];
+            assertThat(single.getCertID().getSerialNumber()).isEqualTo(tsaCert.getSerialNumber());
+            assertThat(single.getCertStatus()).isEqualTo(CertificateStatus.GOOD);
+        }
+        Path file = Files.write(dir.resolve("stamped-ltv.pdf"), stamped);
+        assertThat(PdfSignatureInspector.inspect(file.toString()))
+                .as("signature and document timestamp still verify after the /DSS update").isZero();
+    }
+
+    @Test
+    void stillReturnsTheTimestampedDocumentWhenOcspIsDown() throws Exception {
+        ocspMode.set(Ocsp.DOWN);
+        byte[] stamped = timestamperWithValidationData().timestamp(signedPdf(), "test");
+
+        assertThat(hasDss(stamped)).isFalse();
+        Path file = Files.write(dir.resolve("stamped-no-ocsp.pdf"), stamped);
+        assertThat(PdfSignatureInspector.inspect(file.toString())).isZero();
+    }
+
+    @Test
+    void neverEmbedsARevokedStatusAsValidationData() throws Exception {
+        ocspMode.set(Ocsp.REVOKED);
+        byte[] stamped = timestamperWithValidationData().timestamp(signedPdf(), "test");
+
+        assertThat(hasDss(stamped)).isFalse();
     }
 
     @Test
@@ -206,6 +311,17 @@ class DocumentTimestamperTest {
         return new DocumentTimestamper(new TsaClient(tsaUrl, POLICY, "SHA256", 5000, null, null));
     }
 
+    private static DocumentTimestamper timestamperWithValidationData() {
+        return new DocumentTimestamper(new TsaClient(tsaUrl, POLICY, "SHA256", 5000, null, null),
+                new TimestampValidationData(new OcspClient(5000)));
+    }
+
+    private static boolean hasDss(byte[] pdf) throws Exception {
+        try (PDDocument document = PDDocument.load(pdf)) {
+            return document.getDocumentCatalog().getCOSObject().getDictionaryObject(COSName.getPDFName("DSS")) != null;
+        }
+    }
+
     /** A test PDF with an ordinary detached CMS signature, as ADSS would return it. */
     private byte[] signedPdf() throws Exception {
         Path unsigned = dir.resolve("unsigned-" + System.nanoTime() + ".pdf");
@@ -240,18 +356,29 @@ class DocumentTimestamperTest {
         return generator.generateKeyPair();
     }
 
-    private static X509Certificate certificate(String dn, KeyPair keys, boolean tsa) throws Exception {
+    /**
+     * @param issuer    {@code null} for a self-signed certificate
+     * @param ocspUrl   written into Authority Information Access when not {@code null}
+     */
+    private static X509Certificate certificate(String dn, KeyPair keys, X509Certificate issuer, KeyPair issuerKeys,
+                                               boolean ca, boolean tsa, String ocspUrl) throws Exception {
         Date from = new Date(System.currentTimeMillis() - 86_400_000L);
         Date to = new Date(System.currentTimeMillis() + 86_400_000L);
+        X500Name issuerName = issuer == null ? new X500Name(dn)
+                : new X500Name(issuer.getSubjectX500Principal().getName());
         JcaX509v3CertificateBuilder builder = new JcaX509v3CertificateBuilder(
-                new X500Name(dn), BigInteger.valueOf(System.nanoTime()), from, to, new X500Name(dn), keys.getPublic());
-        builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(false));
+                issuerName, BigInteger.valueOf(System.nanoTime()), from, to, new X500Name(dn), keys.getPublic());
+        builder.addExtension(Extension.basicConstraints, true, new BasicConstraints(ca));
         if (tsa) {
             // RFC 3161: a TSA certificate carries exactly this critical purpose.
             builder.addExtension(Extension.extendedKeyUsage, true, new ExtendedKeyUsage(KeyPurposeId.id_kp_timeStamping));
         }
+        if (ocspUrl != null) {
+            builder.addExtension(Extension.authorityInfoAccess, false, new AuthorityInformationAccess(
+                    AccessDescription.id_ad_ocsp, new GeneralName(GeneralName.uniformResourceIdentifier, ocspUrl)));
+        }
         X509CertificateHolder holder = builder.build(
-                new JcaContentSignerBuilder("SHA256withRSA").build(keys.getPrivate()));
+                new JcaContentSignerBuilder("SHA256withRSA").build(issuerKeys.getPrivate()));
         return new JcaX509CertificateConverter().getCertificate(holder);
     }
 }

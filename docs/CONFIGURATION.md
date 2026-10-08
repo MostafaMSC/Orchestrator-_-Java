@@ -94,7 +94,8 @@ quietly ignored.
 | `truststore_path` / `truststore_password` | — | Trust for the ADSS server certificates. JKS or PKCS12. |
 | `dss.tsa.url` / `policy_id` | — | Required for LT/LTA, and for `document_timestamp`. |
 | `dss.tsa.document_timestamp` | `false` | Append a PAdES document timestamp from this TSA to every signed PDF. See below. |
-| `dss.tsa.hash_algorithm` / `timeout_ms` | `SHA256` / `30000` | Digest sent to the TSA for the document timestamp, and the per-call timeout. |
+| `dss.tsa.hash_algorithm` / `timeout_ms` | `SHA256` / `30000` | Digest sent to the TSA for the document timestamp, and the per-call timeout (TSA and OCSP). |
+| `dss.tsa.validation_data` | `true` | With the document timestamp, also embed the TSA's certificates and OCSP responses in `/DSS`. |
 | `default_credential_strategy` | `LATEST` | See below. |
 | `basic_auth_type` | `implicit` | What `Authorization: Basic` carries. `implicit` — the signer's own id and credential password, as the Ascertia Orchestrator expects. `client_credentials` — an application's client id and secret from `csc-config.registered-clients`. See docs/API.md. |
 | `debug-mode` | `false` | Turns on verbose SDK HTTP logging. Never in production. |
@@ -120,8 +121,18 @@ Orchestrator's output shows as its second signature.
 * TLS to the TSA trusts the JVM's authorities plus `truststore_path`.
 * If the TSA cannot be reached (`1129`) or refuses (`1130`), the request fails.
   A document configured to carry a timestamp is never returned without one.
-* It does not add a `/DSS` revocation store. That is a separate step, needed
-  for full PAdES-LTA.
+* With `validation_data: true` (the default), the TSA's certificates and an
+  OCSP response for each one below the root go into the PDF's `/DSS`, plus the
+  certificates that signed those responses. Readers can then validate the
+  timestamp offline; without them Acrobat shows its validity as *unknown*
+  whenever it cannot reach the OCSP responder itself. The responder is the one
+  named in each certificate (Authority Information Access), so it must be
+  reachable from this host. A response is used only if it is signed by the CA
+  or a responder that CA authorised, and reports the certificate as good. If
+  none can be obtained, the document is still returned, timestamped and valid,
+  and a WARN is logged.
+* `/DSS` covers the timestamp. The signature's own revocation data is added by
+  ADSS (inside the signature for `adbe.pkcs7.detached` profiles).
 
 `--verify-pdf` reports the result as *Document timestamp … PASS*.
 

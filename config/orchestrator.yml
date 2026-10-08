@@ -72,6 +72,10 @@ signing:
       document_timestamp: false
       hash_algorithm: SHA256
       timeout_ms: 30000
+      # Also put the TSA's certificates and OCSP responses into the PDF's /DSS,
+      # so readers validate the timestamp offline. The OCSP responder named in
+      # the TSA certificate must be reachable from this host.
+      validation_data: true
     ocsp:
       url: ${ADSS_OCSP_URL:http://adss-ocsp.internal.example/adss/ocsp}
       hash_algorithm: SHA1

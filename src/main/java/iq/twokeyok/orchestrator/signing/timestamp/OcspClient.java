@@ -1,0 +1,166 @@
+package iq.twokeyok.orchestrator.signing.timestamp;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.Optional;
+
+import org.bouncycastle.asn1.x509.AccessDescription;
+import org.bouncycastle.asn1.x509.AuthorityInformationAccess;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.KeyPurposeId;
+import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.ocsp.BasicOCSPResp;
+import org.bouncycastle.cert.ocsp.CertificateID;
+import org.bouncycastle.cert.ocsp.CertificateStatus;
+import org.bouncycastle.cert.ocsp.OCSPReqBuilder;
+import org.bouncycastle.cert.ocsp.OCSPResp;
+import org.bouncycastle.cert.ocsp.SingleResp;
+import org.bouncycastle.operator.jcajce.JcaContentVerifierProviderBuilder;
+import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
+import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Asks the OCSP responder named in a certificate's Authority Information Access
+ * extension whether that certificate is still good, and returns the response
+ * only when it can be trusted to say so.
+ *
+ * <p>A response is accepted when it is successful, is signed either by the
+ * issuing CA or by a responder certificate that CA issued for OCSP signing,
+ * refers to exactly the certificate asked about, and reports it as good.
+ * Anything else is reported as absent, never embedded.</p>
+ */
+public class OcspClient {
+
+    private static final Logger log = LoggerFactory.getLogger(OcspClient.class);
+
+    /** A trusted, good OCSP answer and the certificate that signed it. */
+    public record Answer(byte[] encoded, X509CertificateHolder responder) {
+    }
+
+    private final HttpClient http;
+    private final Duration timeout;
+
+    public OcspClient(int timeoutMs) {
+        this.timeout = Duration.ofMillis(Math.max(1000, timeoutMs));
+        this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
+    }
+
+    /** @return the OCSP URL in the certificate, if it names one */
+    public static Optional<String> ocspUrl(X509CertificateHolder certificate) {
+        AuthorityInformationAccess aia = AuthorityInformationAccess.fromExtensions(certificate.getExtensions());
+        if (aia == null) {
+            return Optional.empty();
+        }
+        for (AccessDescription description : aia.getAccessDescriptions()) {
+            if (AccessDescription.id_ad_ocsp.equals(description.getAccessMethod())
+                    && description.getAccessLocation().getTagNo() == GeneralName.uniformResourceIdentifier) {
+                return Optional.of(description.getAccessLocation().getName().toString());
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * @return the response, when the responder vouches that {@code certificate}
+     *         is good; empty when there is no responder or the answer is not usable
+     */
+    public Optional<Answer> check(X509CertificateHolder certificate, X509CertificateHolder issuer) {
+        Optional<String> url = ocspUrl(certificate);
+        if (url.isEmpty()) {
+            log.debug("No OCSP responder named in {}", certificate.getSubject());
+            return Optional.empty();
+        }
+        try {
+            CertificateID id = new CertificateID(
+                    new JcaDigestCalculatorProviderBuilder().build().get(CertificateID.HASH_SHA1),
+                    issuer, certificate.getSerialNumber());
+            byte[] request = new OCSPReqBuilder().addRequest(id).build().getEncoded();
+
+            HttpResponse<byte[]> reply = http.send(HttpRequest.newBuilder(URI.create(url.get()))
+                            .timeout(timeout)
+                            .header("Content-Type", "application/ocsp-request")
+                            .header("Accept", "application/ocsp-response")
+                            .POST(HttpRequest.BodyPublishers.ofByteArray(request))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            if (reply.statusCode() != 200) {
+                log.warn("OCSP responder {} answered HTTP {} for {}", url.get(), reply.statusCode(),
+                        certificate.getSubject());
+                return Optional.empty();
+            }
+
+            OCSPResp response = new OCSPResp(reply.body());
+            if (response.getStatus() != OCSPResp.SUCCESSFUL) {
+                log.warn("OCSP responder {} refused the request for {} (status {})", url.get(),
+                        certificate.getSubject(), response.getStatus());
+                return Optional.empty();
+            }
+            BasicOCSPResp basic = (BasicOCSPResp) response.getResponseObject();
+            X509CertificateHolder responder = trustedResponder(basic, issuer);
+            if (responder == null) {
+                log.warn("OCSP response for {} is not signed by its CA or a responder that CA authorised",
+                        certificate.getSubject());
+                return Optional.empty();
+            }
+            for (SingleResp single : basic.getResponses()) {
+                if (single.getCertID().matchesIssuer(issuer, new JcaDigestCalculatorProviderBuilder().build())
+                        && single.getCertID().getSerialNumber().equals(certificate.getSerialNumber())) {
+                    if (single.getCertStatus() != CertificateStatus.GOOD) {
+                        log.warn("OCSP reports {} as not good; no validation data is added for it",
+                                certificate.getSubject());
+                        return Optional.empty();
+                    }
+                    return Optional.of(new Answer(response.getEncoded(), responder));
+                }
+            }
+            log.warn("OCSP response from {} does not cover {}", url.get(), certificate.getSubject());
+            return Optional.empty();
+        } catch (IOException e) {
+            log.warn("OCSP responder {} is not reachable for {}: {}", url.get(), certificate.getSubject(),
+                    e.getMessage());
+            return Optional.empty();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+        } catch (Exception e) {
+            log.warn("OCSP response from {} for {} cannot be used: {}", url.get(), certificate.getSubject(),
+                    e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /** The certificate that signed the response, if it is one that may. */
+    private static X509CertificateHolder trustedResponder(BasicOCSPResp basic, X509CertificateHolder issuer)
+            throws Exception {
+        JcaContentVerifierProviderBuilder verifiers =
+                new JcaContentVerifierProviderBuilder().setProvider(BouncyCastleProvider.PROVIDER_NAME);
+        // Signed by the CA itself.
+        if (basic.isSignatureValid(verifiers.build(issuer))) {
+            return issuer;
+        }
+        // Signed by a delegated responder: issued by that CA, for OCSP signing.
+        for (X509CertificateHolder candidate : basic.getCerts()) {
+            boolean issuedByCa = candidate.getIssuer().equals(issuer.getSubject())
+                    && candidate.isSignatureValid(verifiers.build(issuer));
+            ExtendedKeyUsage usage = ExtendedKeyUsage.fromExtensions(candidate.getExtensions());
+            boolean forOcsp = usage != null && usage.hasKeyPurposeId(KeyPurposeId.id_kp_OCSPSigning);
+            if (issuedByCa && forOcsp && candidate.isValidOn(new java.util.Date())
+                    && basic.isSignatureValid(verifiers.build(candidate))) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /** Whether a certificate is a self-signed root, which has no revocation to check. */
+    public static boolean isSelfSigned(X509CertificateHolder certificate) {
+        return certificate.getSubject().equals(certificate.getIssuer());
+    }
+}

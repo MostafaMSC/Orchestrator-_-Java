@@ -314,7 +314,13 @@ public record SigningProperties(
                       String policyId,
                       @DefaultValue("false") boolean documentTimestamp,
                       @DefaultValue("SHA256") String hashAlgorithm,
-                      @DefaultValue("30000") int timeoutMs) {
+                      @DefaultValue("30000") int timeoutMs,
+                      /**
+                       * With the document timestamp: also add the TSA's
+                       * certificates and OCSP responses to the PDF's /DSS, so
+                       * readers can validate the timestamp offline.
+                       */
+                      @DefaultValue("true") boolean validationData) {
     }
 
     public record Ocsp(String url, @DefaultValue("SHA1") String hashAlgorithm) {

@@ -50,6 +50,7 @@ public class DocumentTimestamper {
     private static final COSName ETSI_RFC3161 = COSName.getPDFName("ETSI.RFC3161");
 
     private final TsaClient tsa;
+    private final TimestampValidationData validationData;
 
     @Autowired
     public DocumentTimestamper(SigningProperties properties) {
@@ -58,14 +59,23 @@ public class DocumentTimestamper {
                 ? new TsaClient(config.url(), config.policyId(), config.hashAlgorithm(), config.timeoutMs(),
                         properties.truststorePath(), properties.truststorePassword())
                 : null;
+        this.validationData = tsa != null && config.validationData()
+                ? new TimestampValidationData(new OcspClient(config.timeoutMs()))
+                : null;
         if (tsa != null) {
-            log.info("Signed documents receive a document timestamp from {}", tsa.url());
+            log.info("Signed documents receive a document timestamp from {}{}", tsa.url(),
+                    validationData == null ? "" : ", with its validation data in /DSS");
         }
     }
 
     /** For tests and for callers that bring their own client. */
     public DocumentTimestamper(TsaClient tsa) {
+        this(tsa, null);
+    }
+
+    public DocumentTimestamper(TsaClient tsa, TimestampValidationData validationData) {
         this.tsa = tsa;
+        this.validationData = validationData;
     }
 
     public boolean isEnabled() {
@@ -117,7 +127,8 @@ public class DocumentTimestamper {
 
             log.info("[{}] Document timestamp from {}: serial {} at {}", requestId, tsa.url(),
                     granted[0].getTimeStampInfo().getSerialNumber(), granted[0].getTimeStampInfo().getGenTime());
-            return out.toByteArray();
+            byte[] stamped = out.toByteArray();
+            return validationData == null ? stamped : validationData.addFor(stamped, granted[0], requestId);
         } catch (IOException | RuntimeException e) {
             if (failure[0] != null) {
                 throw failure[0];
