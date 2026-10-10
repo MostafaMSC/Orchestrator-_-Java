@@ -226,14 +226,12 @@ public class OcspClient {
         // A responder pinned by fingerprint, accepted although another CA issued
         // it. It must still be a current OCSP-signing certificate that signed
         // this response; only the issuer rule is waived, and only for it.
-        JcaContentVerifierProviderBuilder verifiers =
-                new JcaContentVerifierProviderBuilder().setProvider(BouncyCastleProvider.PROVIDER_NAME);
         for (X509CertificateHolder candidate : basic.getCerts()) {
             ExtendedKeyUsage usage = ExtendedKeyUsage.fromExtensions(candidate.getExtensions());
             if (pinnedResponders.contains(fingerprint(candidate))
                     && usage != null && usage.hasKeyPurposeId(KeyPurposeId.id_kp_OCSPSigning)
                     && candidate.isValidOn(new java.util.Date())
-                    && basic.isSignatureValid(verifiers.build(candidate))) {
+                    && signedBy(basic, candidate)) {
                 log.info("Accepting OCSP responder {} by its pinned fingerprint "
                         + "(signing.dss.ocsp.trusted_responders), although {} did not issue it",
                         candidate.getSubject(), issuer.getSubject());
@@ -257,26 +255,45 @@ public class OcspClient {
     }
 
     /** RFC 6960: the CA itself, or a responder that CA issued for OCSP signing. */
-    private static X509CertificateHolder authorisedResponder(BasicOCSPResp basic, X509CertificateHolder issuer)
-            throws Exception {
-        JcaContentVerifierProviderBuilder verifiers =
-                new JcaContentVerifierProviderBuilder().setProvider(BouncyCastleProvider.PROVIDER_NAME);
+    private static X509CertificateHolder authorisedResponder(BasicOCSPResp basic, X509CertificateHolder issuer) {
         // Signed by the CA itself.
-        if (basic.isSignatureValid(verifiers.build(issuer))) {
+        if (signedBy(basic, issuer)) {
             return issuer;
         }
         // Signed by a delegated responder: issued by that CA, for OCSP signing.
         for (X509CertificateHolder candidate : basic.getCerts()) {
-            boolean issuedByCa = candidate.getIssuer().equals(issuer.getSubject())
-                    && candidate.isSignatureValid(verifiers.build(issuer));
+            boolean issuedByCa = candidate.getIssuer().equals(issuer.getSubject()) && issuedBy(candidate, issuer);
             ExtendedKeyUsage usage = ExtendedKeyUsage.fromExtensions(candidate.getExtensions());
             boolean forOcsp = usage != null && usage.hasKeyPurposeId(KeyPurposeId.id_kp_OCSPSigning);
-            if (issuedByCa && forOcsp && candidate.isValidOn(new java.util.Date())
-                    && basic.isSignatureValid(verifiers.build(candidate))) {
+            if (issuedByCa && forOcsp && candidate.isValidOn(new java.util.Date()) && signedBy(basic, candidate)) {
                 return candidate;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether {@code certificate}'s key signed the response. A key that cannot
+     * verify this signature at all - an EC key against an RSA signature, say -
+     * makes the provider throw rather than answer; that means "not this one",
+     * and the next candidate must still be tried.
+     */
+    private static boolean signedBy(BasicOCSPResp basic, X509CertificateHolder certificate) {
+        try {
+            return basic.isSignatureValid(new JcaContentVerifierProviderBuilder()
+                    .setProvider(BouncyCastleProvider.PROVIDER_NAME).build(certificate));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean issuedBy(X509CertificateHolder certificate, X509CertificateHolder issuer) {
+        try {
+            return certificate.isSignatureValid(new JcaContentVerifierProviderBuilder()
+                    .setProvider(BouncyCastleProvider.PROVIDER_NAME).build(issuer));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** Whether a certificate is a self-signed root, which has no revocation to check. */
