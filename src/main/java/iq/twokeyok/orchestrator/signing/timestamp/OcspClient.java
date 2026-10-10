@@ -123,32 +123,7 @@ public class OcspClient {
                 return Optional.empty();
             }
 
-            OCSPResp response = new OCSPResp(reply.body());
-            if (response.getStatus() != OCSPResp.SUCCESSFUL) {
-                log.warn("OCSP responder {} refused the request for {} (status {})", url,
-                        certificate.getSubject(), response.getStatus());
-                return Optional.empty();
-            }
-            BasicOCSPResp basic = (BasicOCSPResp) response.getResponseObject();
-            X509CertificateHolder responder = trustedResponder(basic, issuer);
-            if (responder == null) {
-                log.warn("OCSP response for {} is not signed by its CA or a responder that CA authorised",
-                        certificate.getSubject());
-                return Optional.empty();
-            }
-            for (SingleResp single : basic.getResponses()) {
-                if (single.getCertID().matchesIssuer(issuer, new JcaDigestCalculatorProviderBuilder().build())
-                        && single.getCertID().getSerialNumber().equals(certificate.getSerialNumber())) {
-                    if (single.getCertStatus() != CertificateStatus.GOOD) {
-                        log.warn("OCSP reports {} as not good; no validation data is added for it",
-                                certificate.getSubject());
-                        return Optional.empty();
-                    }
-                    return Optional.of(new Answer(response.getEncoded(), responder));
-                }
-            }
-            log.warn("OCSP response from {} does not cover {}", url, certificate.getSubject());
-            return Optional.empty();
+            return accept(reply.body(), certificate, issuer, url);
         } catch (IOException e) {
             log.warn("OCSP responder {} is not reachable for {}: {}", url, certificate.getSubject(),
                     e.getMessage());
@@ -161,6 +136,58 @@ public class OcspClient {
                     e.getMessage());
             return Optional.empty();
         }
+    }
+
+    /**
+     * Applies the same checks to a response obtained elsewhere - for example
+     * one ADSS already embedded in the signature - as to one fetched here.
+     *
+     * @param source where it came from, for the log
+     */
+    public Optional<Answer> accept(byte[] encoded, X509CertificateHolder certificate, X509CertificateHolder issuer,
+                                   String source) {
+        try {
+            OCSPResp response = new OCSPResp(encoded);
+            if (response.getStatus() != OCSPResp.SUCCESSFUL) {
+                log.warn("OCSP response from {} for {} is not successful (status {})", source,
+                        certificate.getSubject(), response.getStatus());
+                return Optional.empty();
+            }
+            BasicOCSPResp basic = (BasicOCSPResp) response.getResponseObject();
+            SingleResp single = find(basic, certificate, issuer);
+            if (single == null) {
+                log.debug("OCSP response from {} does not cover {}", source, certificate.getSubject());
+                return Optional.empty();
+            }
+            X509CertificateHolder responder = trustedResponder(basic, issuer);
+            if (responder == null) {
+                log.warn("OCSP response for {} from {} is not signed by its CA or a responder that CA authorised",
+                        certificate.getSubject(), source);
+                return Optional.empty();
+            }
+            if (single.getCertStatus() != CertificateStatus.GOOD) {
+                log.warn("OCSP reports {} as not good; no validation data is added for it",
+                        certificate.getSubject());
+                return Optional.empty();
+            }
+            return Optional.of(new Answer(response.getEncoded(), responder));
+        } catch (Exception e) {
+            log.warn("OCSP response from {} for {} cannot be used: {}", source, certificate.getSubject(),
+                    e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /** The entry about {@code certificate}, if the response has one. */
+    public static SingleResp find(BasicOCSPResp basic, X509CertificateHolder certificate,
+                                  X509CertificateHolder issuer) throws Exception {
+        for (SingleResp single : basic.getResponses()) {
+            if (single.getCertID().getSerialNumber().equals(certificate.getSerialNumber())
+                    && single.getCertID().matchesIssuer(issuer, new JcaDigestCalculatorProviderBuilder().build())) {
+                return single;
+            }
+        }
+        return null;
     }
 
     /** The certificate that signed the response, if it is one that may. */

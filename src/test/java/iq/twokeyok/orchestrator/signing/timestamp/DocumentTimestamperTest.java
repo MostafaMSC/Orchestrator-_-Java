@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
@@ -14,6 +15,7 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.sun.net.httpserver.HttpServer;
@@ -30,6 +32,7 @@ import org.bouncycastle.asn1.x509.CRLReason;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.cert.ocsp.BasicOCSPResp;
 import org.bouncycastle.cert.ocsp.BasicOCSPRespBuilder;
+import org.bouncycastle.cert.ocsp.CertificateID;
 import org.bouncycastle.cert.ocsp.CertificateStatus;
 import org.bouncycastle.cert.ocsp.OCSPReq;
 import org.bouncycastle.cert.ocsp.OCSPResp;
@@ -92,11 +95,15 @@ class DocumentTimestamperTest {
 
     private static final AtomicReference<Mode> mode = new AtomicReference<>(Mode.GRANT);
     private static final AtomicReference<Ocsp> ocspMode = new AtomicReference<>(Ocsp.GOOD);
+    /** Every CA the fake responder answers for, with its key. */
+    private static final Map<X509CertificateHolder, KeyPair> cas = new java.util.LinkedHashMap<>();
     private static HttpServer server;
     private static String tsaUrl;
     private static X509Certificate tsaCert;
     private static KeyPair signerKeys;
     private static X509Certificate signerCert;
+    private static KeyPair signerCaKeys;
+    private static X509Certificate signerCaCert;
 
     @TempDir
     Path dir;
@@ -127,8 +134,17 @@ class DocumentTimestamperTest {
         tokens.addCertificates(new JcaCertStore(List.of(tsaCert, caCert, rootCert)));
         TimeStampResponseGenerator responses = new TimeStampResponseGenerator(tokens, TSPAlgorithms.ALLOWED);
 
-        X509CertificateHolder caHolder = new X509CertificateHolder(caCert.getEncoded());
-        X509CertificateHolder rootHolder = new X509CertificateHolder(rootCert.getEncoded());
+        // The e-seal's own chain: a CA (naming no responder) and the signer
+        // certificate, which names the same responder.
+        signerCaKeys = keys();
+        signerCaCert = certificate("CN=Test e-Seal CA", signerCaKeys, null, signerCaKeys, true, false, null);
+        signerKeys = keys();
+        signerCert = certificate("CN=Test e-Seal", signerKeys, signerCaCert, signerCaKeys, false, false,
+                base + "/ocsp");
+
+        cas.put(new X509CertificateHolder(rootCert.getEncoded()), rootKeys);
+        cas.put(new X509CertificateHolder(caCert.getEncoded()), caKeys);
+        cas.put(new X509CertificateHolder(signerCaCert.getEncoded()), signerCaKeys);
         server.createContext("/ocsp", exchange -> {
             try (InputStream in = exchange.getRequestBody()) {
                 if (ocspMode.get() == Ocsp.DOWN) {
@@ -137,20 +153,14 @@ class DocumentTimestamperTest {
                 }
                 OCSPReq request = new OCSPReq(in.readAllBytes());
                 // Answer as whichever CA issued the certificate asked about.
-                boolean forIntermediate = request.getRequestList()[0].getCertID()
-                        .matchesIssuer(rootHolder, new JcaDigestCalculatorProviderBuilder().build());
-                X509CertificateHolder signerHolder = forIntermediate ? rootHolder : caHolder;
-                KeyPair signerPair = forIntermediate ? rootKeys : caKeys;
-                BasicOCSPRespBuilder builder = new BasicOCSPRespBuilder(new RespID(signerHolder.getSubject()));
-                for (Req single : request.getRequestList()) {
-                    builder.addResponse(single.getCertID(), ocspMode.get() == Ocsp.GOOD
-                            ? CertificateStatus.GOOD
-                            : new RevokedStatus(new Date(), CRLReason.keyCompromise));
+                CertificateID id = request.getRequestList()[0].getCertID();
+                X509CertificateHolder issuer = null;
+                for (X509CertificateHolder ca : cas.keySet()) {
+                    if (id.matchesIssuer(ca, new JcaDigestCalculatorProviderBuilder().build())) {
+                        issuer = ca;
+                    }
                 }
-                BasicOCSPResp basic = builder.build(
-                        new JcaContentSignerBuilder("SHA256withRSA").build(signerPair.getPrivate()),
-                        new X509CertificateHolder[] {signerHolder}, new Date());
-                byte[] reply = new OCSPRespBuilder().build(OCSPRespBuilder.SUCCESSFUL, basic).getEncoded();
+                byte[] reply = ocspResponse(issuer, cas.get(issuer), id, ocspMode.get() == Ocsp.GOOD);
                 exchange.getResponseHeaders().add("Content-Type", "application/ocsp-response");
                 exchange.sendResponseHeaders(200, reply.length);
                 exchange.getResponseBody().write(reply);
@@ -189,9 +199,17 @@ class DocumentTimestamperTest {
         });
         server.start();
         tsaUrl = base + "/tsa";
+    }
 
-        signerKeys = keys();
-        signerCert = certificate("CN=Test e-Seal", signerKeys, null, signerKeys, false, false, null);
+    private static byte[] ocspResponse(X509CertificateHolder issuer, KeyPair issuerKeys, CertificateID id,
+                                       boolean good) throws Exception {
+        BasicOCSPRespBuilder builder = new BasicOCSPRespBuilder(new RespID(issuer.getSubject()));
+        builder.addResponse(id, good ? CertificateStatus.GOOD
+                : new RevokedStatus(new Date(), CRLReason.keyCompromise));
+        BasicOCSPResp basic = builder.build(
+                new JcaContentSignerBuilder("SHA256withRSA").build(issuerKeys.getPrivate()),
+                new X509CertificateHolder[] {issuer}, new Date());
+        return new OCSPRespBuilder().build(OCSPRespBuilder.SUCCESSFUL, basic).getEncoded();
     }
 
     @AfterAll
@@ -206,8 +224,8 @@ class DocumentTimestamperTest {
     }
 
     @Test
-    void addsTheTsaValidationDataSoReadersNeedNotGoOnline() throws Exception {
-        byte[] signed = signedPdf();
+    void addsTheValidationDataForTheSignerAndTheTsaToTheDss() throws Exception {
+        byte[] signed = signedPdf(null);
 
         byte[] stamped = timestamperWithValidationData().timestamp(signed, "test");
 
@@ -216,34 +234,51 @@ class DocumentTimestamperTest {
             COSDictionary dss = (COSDictionary) document.getDocumentCatalog().getCOSObject()
                     .getDictionaryObject(COSName.getPDFName("DSS"));
             assertThat(dss).as("/DSS present").isNotNull();
-            COSArray ocsps = (COSArray) dss.getDictionaryObject(COSName.getPDFName("OCSPs"));
             COSArray certs = (COSArray) dss.getDictionaryObject(COSName.getPDFName("Certs"));
-            assertThat(ocsps.size())
-                    .as("the TSA certificate, and its CA through the fallback responder").isEqualTo(2);
-            assertThat(certs.size()).as("TSA certificate, intermediate and root").isEqualTo(3);
+            assertThat(certs.size()).as("e-seal certificate and its CA; TSA, its CA and root").isEqualTo(5);
+            assertThat(coveredSerials(dss)).as("e-seal certificate; TSA certificate and its CA")
+                    .containsExactlyInAnyOrder(signerCert.getSerialNumber(), tsaCert.getSerialNumber(),
+                            cas.keySet().stream().filter(c -> c.getSubject().toString().equals("CN=Test TSA CA"))
+                                    .findFirst().orElseThrow().getSerialNumber());
 
-            List<BigInteger> covered = new java.util.ArrayList<>();
-            for (int i = 0; i < ocsps.size(); i++) {
-                try (InputStream in = ((COSStream) ocsps.getObject(i)).createInputStream()) {
-                    SingleResp single = ((BasicOCSPResp) new OCSPResp(in.readAllBytes()).getResponseObject())
-                            .getResponses()[0];
-                    assertThat(single.getCertStatus()).isEqualTo(CertificateStatus.GOOD);
-                    covered.add(single.getCertID().getSerialNumber());
-                }
-            }
-            assertThat(covered).contains(tsaCert.getSerialNumber());
+            // The signature's validation data is written before the document
+            // timestamp, so the timestamp covers it.
+            PDSignature timestamp = document.getSignatureDictionaries().get(1);
+            int[] range = timestamp.getByteRange();
+            assertThat(indexOf(stamped, "/DSS".getBytes(StandardCharsets.US_ASCII)))
+                    .isBetween(0, range[2] + range[3]);
         }
         Path file = Files.write(dir.resolve("stamped-ltv.pdf"), stamped);
         assertThat(PdfSignatureInspector.inspect(file.toString()))
-                .as("signature and document timestamp still verify after the /DSS update").isZero();
+                .as("signature and document timestamp still verify after the /DSS updates").isZero();
+    }
+
+    @Test
+    void usesTheResponseAdssEmbeddedWhenTheResponderCannotBeReached() throws Exception {
+        CertificateID id = new CertificateID(
+                new JcaDigestCalculatorProviderBuilder().build().get(CertificateID.HASH_SHA1),
+                new X509CertificateHolder(signerCaCert.getEncoded()), signerCert.getSerialNumber());
+        byte[] embedded = ocspResponse(new X509CertificateHolder(signerCaCert.getEncoded()), signerCaKeys, id, true);
+        byte[] signed = signedPdf(embedded);
+        ocspMode.set(Ocsp.DOWN);
+
+        byte[] stamped = timestamperWithValidationData().timestamp(signed, "test");
+
+        try (PDDocument document = PDDocument.load(stamped)) {
+            COSDictionary dss = (COSDictionary) document.getDocumentCatalog().getCOSObject()
+                    .getDictionaryObject(COSName.getPDFName("DSS"));
+            assertThat(coveredSerials(dss)).containsExactly(signerCert.getSerialNumber());
+        }
+        Path file = Files.write(dir.resolve("stamped-embedded.pdf"), stamped);
+        assertThat(PdfSignatureInspector.inspect(file.toString())).isZero();
     }
 
     @Test
     void stillReturnsTheTimestampedDocumentWhenOcspIsDown() throws Exception {
         ocspMode.set(Ocsp.DOWN);
-        byte[] stamped = timestamperWithValidationData().timestamp(signedPdf(), "test");
+        byte[] stamped = timestamperWithValidationData().timestamp(signedPdf(null), "test");
 
-        assertThat(hasDss(stamped)).isFalse();
+        assertThat(responsesIn(stamped)).isZero();
         Path file = Files.write(dir.resolve("stamped-no-ocsp.pdf"), stamped);
         assertThat(PdfSignatureInspector.inspect(file.toString())).isZero();
     }
@@ -251,14 +286,48 @@ class DocumentTimestamperTest {
     @Test
     void neverEmbedsARevokedStatusAsValidationData() throws Exception {
         ocspMode.set(Ocsp.REVOKED);
-        byte[] stamped = timestamperWithValidationData().timestamp(signedPdf(), "test");
+        byte[] stamped = timestamperWithValidationData().timestamp(signedPdf(null), "test");
 
-        assertThat(hasDss(stamped)).isFalse();
+        assertThat(responsesIn(stamped)).isZero();
+    }
+
+    private static List<BigInteger> coveredSerials(COSDictionary dss) throws Exception {
+        List<BigInteger> covered = new java.util.ArrayList<>();
+        COSArray ocsps = (COSArray) dss.getDictionaryObject(COSName.getPDFName("OCSPs"));
+        for (int i = 0; ocsps != null && i < ocsps.size(); i++) {
+            try (InputStream in = ((COSStream) ocsps.getObject(i)).createInputStream()) {
+                SingleResp single = ((BasicOCSPResp) new OCSPResp(in.readAllBytes()).getResponseObject())
+                        .getResponses()[0];
+                assertThat(single.getCertStatus()).isEqualTo(CertificateStatus.GOOD);
+                covered.add(single.getCertID().getSerialNumber());
+            }
+        }
+        return covered;
+    }
+
+    private static int responsesIn(byte[] pdf) throws Exception {
+        try (PDDocument document = PDDocument.load(pdf)) {
+            Object dss = document.getDocumentCatalog().getCOSObject().getDictionaryObject(COSName.getPDFName("DSS"));
+            return dss == null ? 0 : coveredSerials((COSDictionary) dss).size();
+        }
+    }
+
+    private static int indexOf(byte[] haystack, byte[] needle) {
+        outer:
+        for (int i = 0; i <= haystack.length - needle.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        return -1;
     }
 
     @Test
     void appendsADocumentTimestampThatVerifiesAndKeepsTheSignatureValid() throws Exception {
-        byte[] signed = signedPdf();
+        byte[] signed = signedPdf(null);
 
         byte[] stamped = timestamper().timestamp(signed, "test");
 
@@ -278,7 +347,7 @@ class DocumentTimestamperTest {
     @Test
     void reportsARefusalAsTsaRejected() throws Exception {
         mode.set(Mode.REJECT);
-        byte[] signed = signedPdf();
+        byte[] signed = signedPdf(null);
 
         assertThatThrownBy(() -> timestamper().timestamp(signed, "test"))
                 .isInstanceOf(OrchestratorException.class)
@@ -289,7 +358,7 @@ class DocumentTimestamperTest {
     @Test
     void neverEmbedsATokenForOtherData() throws Exception {
         mode.set(Mode.WRONG_IMPRINT);
-        byte[] signed = signedPdf();
+        byte[] signed = signedPdf(null);
 
         assertThatThrownBy(() -> timestamper().timestamp(signed, "test"))
                 .isInstanceOf(OrchestratorException.class)
@@ -299,7 +368,7 @@ class DocumentTimestamperTest {
 
     @Test
     void reportsAnUnreachableTsaAsUnavailable() throws Exception {
-        byte[] signed = signedPdf();
+        byte[] signed = signedPdf(null);
         DocumentTimestamper unreachable = new DocumentTimestamper(
                 new TsaClient("http://127.0.0.1:1/tsa", POLICY, "SHA256", 2000, null, null));
 
@@ -312,7 +381,7 @@ class DocumentTimestamperTest {
     @Test
     void isOffUnlessConfigured() throws Exception {
         DocumentTimestamper off = new DocumentTimestamper((TsaClient) null);
-        byte[] signed = signedPdf();
+        byte[] signed = signedPdf(null);
 
         assertThat(off.isEnabled()).isFalse();
         assertThat(off.timestamp(signed, "test")).isSameAs(signed);
@@ -326,7 +395,7 @@ class DocumentTimestamperTest {
 
     private static DocumentTimestamper timestamperWithValidationData() {
         return new DocumentTimestamper(new TsaClient(tsaUrl, POLICY, "SHA256", 5000, null, null),
-                new TimestampValidationData(new OcspClient(5000)));
+                new LongTermValidationData(new OcspClient(5000)));
     }
 
     private static boolean hasDss(byte[] pdf) throws Exception {
@@ -335,8 +404,14 @@ class DocumentTimestamperTest {
         }
     }
 
-    /** A test PDF with an ordinary detached CMS signature, as ADSS would return it. */
-    private byte[] signedPdf() throws Exception {
+    /**
+     * A test PDF with an ordinary detached CMS signature, as ADSS would return it.
+     *
+     * @param embeddedOcsp an OCSP response to carry in the signature the way
+     *                     ADSS does ({@code adbe-revocationInfoArchival}), or
+     *                     {@code null}
+     */
+    private byte[] signedPdf(byte[] embeddedOcsp) throws Exception {
         Path unsigned = dir.resolve("unsigned-" + System.nanoTime() + ".pdf");
         assertThat(TestPdfGenerator.generate(unsigned.toString())).isZero();
         try (PDDocument document = PDDocument.load(unsigned.toFile())) {
@@ -349,9 +424,22 @@ class DocumentTimestamperTest {
                 try {
                     CMSSignedDataGenerator cms = new CMSSignedDataGenerator();
                     ContentSigner signer = new JcaContentSignerBuilder("SHA256withRSA").build(signerKeys.getPrivate());
-                    cms.addSignerInfoGenerator(new JcaSignerInfoGeneratorBuilder(
-                            new JcaDigestCalculatorProviderBuilder().build()).build(signer, signerCert));
-                    cms.addCertificates(new JcaCertStore(List.of(signerCert)));
+                    JcaSignerInfoGeneratorBuilder info = new JcaSignerInfoGeneratorBuilder(
+                            new JcaDigestCalculatorProviderBuilder().build());
+                    if (embeddedOcsp != null) {
+                        // RevocationInfoArchival ::= SEQUENCE { ocsp [1] EXPLICIT SEQUENCE OF OCSPResponse }
+                        org.bouncycastle.asn1.DERSequence archival = new org.bouncycastle.asn1.DERSequence(
+                                new org.bouncycastle.asn1.DERTaggedObject(true, 1,
+                                        new org.bouncycastle.asn1.DERSequence(
+                                                org.bouncycastle.asn1.ocsp.OCSPResponse.getInstance(embeddedOcsp))));
+                        org.bouncycastle.asn1.cms.Attribute attribute = new org.bouncycastle.asn1.cms.Attribute(
+                                new ASN1ObjectIdentifier("1.2.840.113583.1.1.8"),
+                                new org.bouncycastle.asn1.DERSet(archival));
+                        info.setSignedAttributeGenerator(new org.bouncycastle.cms.DefaultSignedAttributeTableGenerator(
+                                new org.bouncycastle.asn1.cms.AttributeTable(attribute)));
+                    }
+                    cms.addSignerInfoGenerator(info.build(signer, signerCert));
+                    cms.addCertificates(new JcaCertStore(List.of(signerCert, signerCaCert)));
                     return cms.generate(new CMSProcessableByteArray(content.readAllBytes()), false).getEncoded();
                 } catch (Exception e) {
                     throw new java.io.IOException(e);

@@ -50,7 +50,7 @@ public class DocumentTimestamper {
     private static final COSName ETSI_RFC3161 = COSName.getPDFName("ETSI.RFC3161");
 
     private final TsaClient tsa;
-    private final TimestampValidationData validationData;
+    private final LongTermValidationData validationData;
 
     @Autowired
     public DocumentTimestamper(SigningProperties properties) {
@@ -60,11 +60,11 @@ public class DocumentTimestamper {
                         properties.truststorePath(), properties.truststorePassword())
                 : null;
         this.validationData = tsa != null && config.validationData()
-                ? new TimestampValidationData(new OcspClient(config.timeoutMs()), properties.dss().ocsp().url())
+                ? new LongTermValidationData(new OcspClient(config.timeoutMs()), properties.dss().ocsp().url())
                 : null;
         if (tsa != null) {
             log.info("Signed documents receive a document timestamp from {}{}", tsa.url(),
-                    validationData == null ? "" : ", with its validation data in /DSS");
+                    validationData == null ? "" : ", with the validation data for every signature and timestamp in /DSS");
         }
     }
 
@@ -73,7 +73,7 @@ public class DocumentTimestamper {
         this(tsa, null);
     }
 
-    public DocumentTimestamper(TsaClient tsa, TimestampValidationData validationData) {
+    public DocumentTimestamper(TsaClient tsa, LongTermValidationData validationData) {
         this.tsa = tsa;
         this.validationData = validationData;
     }
@@ -96,12 +96,18 @@ public class DocumentTimestamper {
      *                               refuses; the signature is never returned
      *                               without the timestamp it was configured to carry
      */
-    public byte[] timestamp(byte[] pdf, String requestId) {
+    public byte[] timestamp(byte[] signedPdf, String requestId) {
         if (tsa == null) {
-            return pdf;
+            return signedPdf;
         }
         TimeStampToken[] granted = new TimeStampToken[1];
         RuntimeException[] failure = new RuntimeException[1];
+
+        // PAdES-LTA order: the signature's validation data first, so the
+        // document timestamp covers it; then whatever the timestamp itself
+        // needs that is not already there.
+        LongTermValidationData.Attempted attempted = new LongTermValidationData.Attempted();
+        byte[] pdf = validationData == null ? signedPdf : validationData.addFor(signedPdf, requestId, attempted);
 
         try (PDDocument document = PDDocument.load(pdf);
              SignatureOptions options = new SignatureOptions()) {
@@ -128,7 +134,7 @@ public class DocumentTimestamper {
             log.info("[{}] Document timestamp from {}: serial {} at {}", requestId, tsa.url(),
                     granted[0].getTimeStampInfo().getSerialNumber(), granted[0].getTimeStampInfo().getGenTime());
             byte[] stamped = out.toByteArray();
-            return validationData == null ? stamped : validationData.addFor(stamped, granted[0], requestId);
+            return validationData == null ? stamped : validationData.addFor(stamped, requestId, attempted);
         } catch (IOException | RuntimeException e) {
             if (failure[0] != null) {
                 throw failure[0];

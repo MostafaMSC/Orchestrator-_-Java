@@ -121,18 +121,29 @@ Orchestrator's output shows as its second signature.
 * TLS to the TSA trusts the JVM's authorities plus `truststore_path`.
 * If the TSA cannot be reached (`1129`) or refuses (`1130`), the request fails.
   A document configured to carry a timestamp is never returned without one.
-* With `validation_data: true` (the default), the TSA's certificates and an
-  OCSP response for each one below the root go into the PDF's `/DSS`, plus the
-  certificates that signed those responses. Readers can then validate the
-  timestamp offline; without them Acrobat shows its validity as *unknown*
-  whenever it cannot reach the OCSP responder itself. The responder is the one
-  named in each certificate (Authority Information Access), so it must be
-  reachable from this host. A response is used only if it is signed by the CA
-  or a responder that CA authorised, and reports the certificate as good. If
-  none can be obtained, the document is still returned, timestamped and valid,
-  and a WARN is logged.
-* `/DSS` covers the timestamp. The signature's own revocation data is added by
-  ADSS (inside the signature for `adbe.pkcs7.detached` profiles).
+* With `validation_data: true` (the default), the PDF's Document Security
+  Store is filled for **every** signature and timestamp in the document
+  (PAdES Part 4, B-LT):
+  * `/Certs` — the e-seal certificate and its CA chain, the TSA chain of the
+    signature timestamp, and the TSA chain of the document timestamp;
+  * `/OCSPs` — an OCSP response for each of those certificates below a root,
+    plus the certificates that signed the responses.
+
+  Readers can then validate everything offline. With an `ETSI.CAdES.detached`
+  signature this is where they look for revocation data; without it Acrobat
+  shows the validity as *unknown* whenever it cannot reach the responder itself.
+* Order, as PAdES-LTA requires: the signature's validation data is written
+  first, so the document timestamp covers it; afterwards only what the
+  timestamp adds and is not already there.
+* Each certificate's status is asked of the responder it names, then of
+  `dss.ocsp.url`, then of the responders the rest of the document names. When
+  none answers, a response ADSS embedded in the signature
+  (`adbe-revocationInfoArchival`) is reused. Every response, fetched or
+  embedded, must be signed by the issuing CA or a responder that CA authorised
+  and report the certificate as good; anything else is left out and logged.
+* Missing validation data never fails a request: the document is returned,
+  signed and timestamped, and a WARN names what readers will have to check
+  online.
 
 `--verify-pdf` reports the result as *Document timestamp … PASS*.
 
