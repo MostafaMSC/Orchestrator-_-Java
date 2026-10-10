@@ -332,7 +332,18 @@ public record SigningProperties(
                       @DefaultValue("true") boolean validationData) {
     }
 
-    public record Ocsp(String url, @DefaultValue("SHA1") String hashAlgorithm) {
+    /**
+     * @param trustedResponders SHA-256 fingerprints of OCSP responder
+     *        certificates to accept although they were not issued by the CA of
+     *        the certificate they answer for. RFC 6960 does not allow that; this
+     *        is a named, deliberate exception for a PKI that is configured that
+     *        way. Empty means none.
+     */
+    public record Ocsp(String url, @DefaultValue("SHA1") String hashAlgorithm, List<String> trustedResponders) {
+
+        public Ocsp {
+            trustedResponders = trustedResponders == null ? List.of() : trustedResponders;
+        }
     }
 
     public record Proxy(String host, @DefaultValue("0") int port, String username, String password) {

@@ -141,6 +141,13 @@ Orchestrator's output shows as its second signature.
   (`adbe-revocationInfoArchival`) is reused. Every response, fetched or
   embedded, must be signed by the issuing CA or a responder that CA authorised
   and report the certificate as good; anything else is left out and logged.
+* `dss.ocsp.trusted_responders` lists SHA-256 fingerprints of OCSP responder
+  certificates to accept although a different CA issued them. RFC 6960 does
+  not allow that, so it is off unless listed. A pinned responder must still be
+  a current OCSP-signing certificate that signed the response; only the issuer
+  rule is waived. Its chain is added to `/Certs` and its CA's own status to
+  `/OCSPs`. Use it only for a PKI known to be configured that way, and remove
+  the entry once the PKI is corrected.
 * Missing validation data never fails a request: the document is returned,
   signed and timestamped, and a WARN names what readers will have to check
   online.

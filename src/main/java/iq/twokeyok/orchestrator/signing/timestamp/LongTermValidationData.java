@@ -110,16 +110,21 @@ public class LongTermValidationData {
         Map<String, byte[]> newCertificates = new LinkedHashMap<>();
         List<byte[]> newResponses = new ArrayList<>();
         List<String> fallbackUrls = fallbackUrls(material.chain);
+        // Grows while it is walked: a responder's own chain, carried in its
+        // response, needs validation data as well.
+        List<X509CertificateHolder> work = new ArrayList<>(material.chain);
         try {
-            for (X509CertificateHolder certificate : material.chain) {
+            for (int i = 0; i < work.size(); i++) {
+                X509CertificateHolder certificate = work.get(i);
                 if (!material.existingCertificates.contains(key(certificate))) {
                     put(newCertificates, certificate);
                 }
-                if (OcspClient.isSelfSigned(certificate) || material.covered(certificate)
+                if (OcspClient.isSelfSigned(certificate) || isOcspNoCheck(certificate)
+                        || material.covered(certificate)
                         || !attempted.serials.add(certificate.getSerialNumber())) {
                     continue;
                 }
-                Optional<X509CertificateHolder> issuer = issuerOf(certificate, material.chain);
+                Optional<X509CertificateHolder> issuer = issuerOf(certificate, work);
                 if (issuer.isEmpty()) {
                     log.warn("[{}] The document does not carry the issuer of {}; its status cannot be checked",
                             requestId, certificate.getSubject());
@@ -131,8 +136,13 @@ public class LongTermValidationData {
                 }
                 if (answer.isPresent()) {
                     newResponses.add(answer.get().encoded());
-                    if (!material.existingCertificates.contains(key(answer.get().responder()))) {
-                        put(newCertificates, answer.get().responder());
+                    List<X509CertificateHolder> responderChain = new ArrayList<>();
+                    responderChain.add(answer.get().responder());
+                    responderChain.addAll(answer.get().certificates());
+                    for (X509CertificateHolder carried : responderChain) {
+                        if (work.stream().noneMatch(carried::equals)) {
+                            work.add(carried);
+                        }
                     }
                 } else {
                     log.warn("[{}] No usable OCSP response for {}; readers will have to check it online",
@@ -303,6 +313,11 @@ public class LongTermValidationData {
             OcspClient.ocspUrl(certificate).ifPresent(urls::add);
         }
         return List.copyOf(urls);
+    }
+
+    /** RFC 6960 id-pkix-ocsp-nocheck: an OCSP responder whose own status is not checked. */
+    private static boolean isOcspNoCheck(X509CertificateHolder certificate) {
+        return certificate.getExtension(new ASN1ObjectIdentifier("1.3.6.1.5.5.7.48.1.5")) != null;
     }
 
     private static Optional<X509CertificateHolder> issuerOf(X509CertificateHolder certificate,

@@ -91,7 +91,7 @@ class DocumentTimestamperTest {
     enum Mode { GRANT, REJECT, WRONG_IMPRINT }
 
     /** How the fake OCSP responder answers the next request. */
-    enum Ocsp { GOOD, REVOKED, DOWN }
+    enum Ocsp { GOOD, REVOKED, DOWN, MISISSUED }
 
     private static final AtomicReference<Mode> mode = new AtomicReference<>(Mode.GRANT);
     private static final AtomicReference<Ocsp> ocspMode = new AtomicReference<>(Ocsp.GOOD);
@@ -104,6 +104,10 @@ class DocumentTimestamperTest {
     private static X509Certificate signerCert;
     private static KeyPair signerCaKeys;
     private static X509Certificate signerCaCert;
+    /** A responder issued by an unrelated CA, as the staging TSA responder is. */
+    private static KeyPair misissuedKeys;
+    private static X509CertificateHolder misissuedResponder;
+    private static X509CertificateHolder oldCa;
 
     @TempDir
     Path dir;
@@ -145,6 +149,20 @@ class DocumentTimestamperTest {
         cas.put(new X509CertificateHolder(rootCert.getEncoded()), rootKeys);
         cas.put(new X509CertificateHolder(caCert.getEncoded()), caKeys);
         cas.put(new X509CertificateHolder(signerCaCert.getEncoded()), signerCaKeys);
+
+        // The staging misconfiguration: an OCSP responder for the TSA's CA that
+        // a different (old) CA issued.
+        KeyPair oldCaKeys = keys();
+        X509Certificate oldCaCert = certificate("CN=Old TSA CA", oldCaKeys, null, oldCaKeys, true, false, null);
+        oldCa = new X509CertificateHolder(oldCaCert.getEncoded());
+        misissuedKeys = keys();
+        JcaX509v3CertificateBuilder responder = new JcaX509v3CertificateBuilder(
+                new X500Name("CN=Old TSA CA"), BigInteger.valueOf(System.nanoTime()),
+                new Date(System.currentTimeMillis() - 86_400_000L), new Date(System.currentTimeMillis() + 86_400_000L),
+                new X500Name("CN=Old TSA CA OCSP"), misissuedKeys.getPublic());
+        responder.addExtension(Extension.extendedKeyUsage, true, new ExtendedKeyUsage(KeyPurposeId.id_kp_OCSPSigning));
+        responder.addExtension(new ASN1ObjectIdentifier("1.3.6.1.5.5.7.48.1.5"), false, org.bouncycastle.asn1.DERNull.INSTANCE);
+        misissuedResponder = responder.build(new JcaContentSignerBuilder("SHA256withRSA").build(oldCaKeys.getPrivate()));
         server.createContext("/ocsp", exchange -> {
             try (InputStream in = exchange.getRequestBody()) {
                 if (ocspMode.get() == Ocsp.DOWN) {
@@ -160,7 +178,10 @@ class DocumentTimestamperTest {
                         issuer = ca;
                     }
                 }
-                byte[] reply = ocspResponse(issuer, cas.get(issuer), id, ocspMode.get() == Ocsp.GOOD);
+                byte[] reply = ocspMode.get() == Ocsp.MISISSUED && id.getSerialNumber().equals(tsaCert.getSerialNumber())
+                        // Signed by a responder another CA issued, carrying its chain.
+                        ? signedBy(misissuedResponder, misissuedKeys, id, oldCa)
+                        : ocspResponse(issuer, cas.get(issuer), id, ocspMode.get() != Ocsp.REVOKED);
                 exchange.getResponseHeaders().add("Content-Type", "application/ocsp-response");
                 exchange.sendResponseHeaders(200, reply.length);
                 exchange.getResponseBody().write(reply);
@@ -199,6 +220,18 @@ class DocumentTimestamperTest {
         });
         server.start();
         tsaUrl = base + "/tsa";
+    }
+
+    private static byte[] signedBy(X509CertificateHolder responder, KeyPair keys, CertificateID id,
+                                   X509CertificateHolder... chain) throws Exception {
+        BasicOCSPRespBuilder builder = new BasicOCSPRespBuilder(new RespID(responder.getSubject()));
+        builder.addResponse(id, CertificateStatus.GOOD);
+        X509CertificateHolder[] carried = new X509CertificateHolder[chain.length + 1];
+        carried[0] = responder;
+        System.arraycopy(chain, 0, carried, 1, chain.length);
+        BasicOCSPResp basic = builder.build(
+                new JcaContentSignerBuilder("SHA256withRSA").build(keys.getPrivate()), carried, new Date());
+        return new OCSPRespBuilder().build(OCSPRespBuilder.SUCCESSFUL, basic).getEncoded();
     }
 
     private static byte[] ocspResponse(X509CertificateHolder issuer, KeyPair issuerKeys, CertificateID id,
@@ -270,6 +303,47 @@ class DocumentTimestamperTest {
             assertThat(coveredSerials(dss)).containsExactly(signerCert.getSerialNumber());
         }
         Path file = Files.write(dir.resolve("stamped-embedded.pdf"), stamped);
+        assertThat(PdfSignatureInspector.inspect(file.toString())).isZero();
+    }
+
+    @Test
+    void refusesAResponderAnotherCaIssuedUnlessItIsPinned() throws Exception {
+        ocspMode.set(Ocsp.MISISSUED);
+
+        byte[] stamped = timestamperWithValidationData().timestamp(signedPdf(null), "test");
+
+        try (PDDocument document = PDDocument.load(stamped)) {
+            COSDictionary dss = (COSDictionary) document.getDocumentCatalog().getCOSObject()
+                    .getDictionaryObject(COSName.getPDFName("DSS"));
+            assertThat(coveredSerials(dss)).doesNotContain(tsaCert.getSerialNumber());
+        }
+    }
+
+    @Test
+    void acceptsAPinnedResponderAndAddsItsChain() throws Exception {
+        ocspMode.set(Ocsp.MISISSUED);
+        String pin = OcspClient.fingerprint(misissuedResponder);
+        DocumentTimestamper pinned = new DocumentTimestamper(
+                new TsaClient(tsaUrl, POLICY, "SHA256", 5000, null, null),
+                new LongTermValidationData(new OcspClient(5000, List.of(pin.toLowerCase()))));
+
+        byte[] stamped = pinned.timestamp(signedPdf(null), "test");
+
+        try (PDDocument document = PDDocument.load(stamped)) {
+            COSDictionary dss = (COSDictionary) document.getDocumentCatalog().getCOSObject()
+                    .getDictionaryObject(COSName.getPDFName("DSS"));
+            assertThat(coveredSerials(dss)).contains(tsaCert.getSerialNumber());
+            List<String> subjects = new java.util.ArrayList<>();
+            COSArray certs = (COSArray) dss.getDictionaryObject(COSName.getPDFName("Certs"));
+            for (int i = 0; i < certs.size(); i++) {
+                try (InputStream in = ((COSStream) certs.getObject(i)).createInputStream()) {
+                    subjects.add(new X509CertificateHolder(in.readAllBytes()).getSubject().toString());
+                }
+            }
+            assertThat(subjects).as("the responder and the CA that issued it")
+                    .contains("CN=Old TSA CA OCSP", "CN=Old TSA CA");
+        }
+        Path file = Files.write(dir.resolve("stamped-pinned.pdf"), stamped);
         assertThat(PdfSignatureInspector.inspect(file.toString())).isZero();
     }
 

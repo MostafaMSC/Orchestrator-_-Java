@@ -79,6 +79,11 @@ signing:
     ocsp:
       url: ${ADSS_OCSP_URL:http://adss-ocsp.internal.example/adss/ocsp}
       hash_algorithm: SHA1
+      # OCSP responders accepted although another CA issued them - an
+      # exception to RFC 6960 for a PKI configured that way, by SHA-256
+      # fingerprint of the responder certificate. Empty: none.
+      # trusted_responders:
+      #   - 6F6A8F6480B8BB17289B911ECEF992AAB93C12450AD4DF788B5741C27E77EF5E  # TS TSA CA OCSP STG - AUG 2026
 
     # ----------------------------------------------------------------
     # Signature defaults — the lowest layer of the precedence chain

@@ -60,7 +60,9 @@ public class DocumentTimestamper {
                         properties.truststorePath(), properties.truststorePassword())
                 : null;
         this.validationData = tsa != null && config.validationData()
-                ? new LongTermValidationData(new OcspClient(config.timeoutMs()), properties.dss().ocsp().url())
+                ? new LongTermValidationData(
+                        new OcspClient(config.timeoutMs(), properties.dss().ocsp().trustedResponders()),
+                        properties.dss().ocsp().url())
                 : null;
         if (tsa != null) {
             log.info("Signed documents receive a document timestamp from {}{}", tsa.url(),

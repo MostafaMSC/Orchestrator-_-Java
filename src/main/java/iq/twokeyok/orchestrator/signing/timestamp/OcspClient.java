@@ -41,14 +41,34 @@ public class OcspClient {
 
     private static final Logger log = LoggerFactory.getLogger(OcspClient.class);
 
-    /** A trusted, good OCSP answer and the certificate that signed it. */
-    public record Answer(byte[] encoded, X509CertificateHolder responder) {
+    /**
+     * A trusted, good OCSP answer, the certificate that signed it, and the other
+     * certificates the response carried (the responder's chain).
+     */
+    public record Answer(byte[] encoded, X509CertificateHolder responder, List<X509CertificateHolder> certificates) {
     }
 
     private final HttpClient http;
     private final Duration timeout;
+    /** SHA-256 fingerprints, upper-case hex without separators. */
+    private final java.util.Set<String> pinnedResponders;
 
     public OcspClient(int timeoutMs) {
+        this(timeoutMs, List.of());
+    }
+
+    /**
+     * @param pinnedResponders SHA-256 fingerprints of responder certificates
+     *                         accepted outside RFC 6960's issuer rule
+     *                         ({@code signing.dss.ocsp.trusted_responders})
+     */
+    public OcspClient(int timeoutMs, java.util.Collection<String> pinnedResponders) {
+        this.pinnedResponders = new java.util.HashSet<>();
+        for (String fingerprint : pinnedResponders) {
+            if (fingerprint != null && !fingerprint.isBlank()) {
+                this.pinnedResponders.add(normaliseFingerprint(fingerprint));
+            }
+        }
         this.timeout = Duration.ofMillis(Math.max(1000, timeoutMs));
         // HTTP/1.1 only. On a plain http:// URL the JDK client otherwise asks to
         // upgrade to HTTP/2 (h2c), and the staging responder answers that by
@@ -170,7 +190,13 @@ public class OcspClient {
                         certificate.getSubject());
                 return Optional.empty();
             }
-            return Optional.of(new Answer(response.getEncoded(), responder));
+            List<X509CertificateHolder> carried = new java.util.ArrayList<>();
+            for (X509CertificateHolder included : basic.getCerts()) {
+                if (!included.equals(responder)) {
+                    carried.add(included);
+                }
+            }
+            return Optional.of(new Answer(response.getEncoded(), responder, carried));
         } catch (Exception e) {
             log.warn("OCSP response from {} for {} cannot be used: {}", source, certificate.getSubject(),
                     e.getMessage());
@@ -191,7 +217,47 @@ public class OcspClient {
     }
 
     /** The certificate that signed the response, if it is one that may. */
-    private static X509CertificateHolder trustedResponder(BasicOCSPResp basic, X509CertificateHolder issuer)
+    private X509CertificateHolder trustedResponder(BasicOCSPResp basic, X509CertificateHolder issuer)
+            throws Exception {
+        X509CertificateHolder authorised = authorisedResponder(basic, issuer);
+        if (authorised != null || pinnedResponders.isEmpty()) {
+            return authorised;
+        }
+        // A responder pinned by fingerprint, accepted although another CA issued
+        // it. It must still be a current OCSP-signing certificate that signed
+        // this response; only the issuer rule is waived, and only for it.
+        JcaContentVerifierProviderBuilder verifiers =
+                new JcaContentVerifierProviderBuilder().setProvider(BouncyCastleProvider.PROVIDER_NAME);
+        for (X509CertificateHolder candidate : basic.getCerts()) {
+            ExtendedKeyUsage usage = ExtendedKeyUsage.fromExtensions(candidate.getExtensions());
+            if (pinnedResponders.contains(fingerprint(candidate))
+                    && usage != null && usage.hasKeyPurposeId(KeyPurposeId.id_kp_OCSPSigning)
+                    && candidate.isValidOn(new java.util.Date())
+                    && basic.isSignatureValid(verifiers.build(candidate))) {
+                log.info("Accepting OCSP responder {} by its pinned fingerprint "
+                        + "(signing.dss.ocsp.trusted_responders), although {} did not issue it",
+                        candidate.getSubject(), issuer.getSubject());
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    public static String fingerprint(X509CertificateHolder certificate) throws java.io.IOException {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded());
+            return java.util.HexFormat.of().withUpperCase().formatHex(digest);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String normaliseFingerprint(String fingerprint) {
+        return fingerprint.trim().replace(":", "").replace(" ", "").toUpperCase(java.util.Locale.ROOT);
+    }
+
+    /** RFC 6960: the CA itself, or a responder that CA issued for OCSP signing. */
+    private static X509CertificateHolder authorisedResponder(BasicOCSPResp basic, X509CertificateHolder issuer)
             throws Exception {
         JcaContentVerifierProviderBuilder verifiers =
                 new JcaContentVerifierProviderBuilder().setProvider(BouncyCastleProvider.PROVIDER_NAME);
