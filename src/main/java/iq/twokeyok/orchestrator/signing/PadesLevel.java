@@ -59,4 +59,38 @@ public final class PadesLevel {
     public static boolean requiresLongTermServices(String sdkType) {
         return sdkType != null;
     }
+
+    public static final String ETSI_CADES_DETACHED = "ETSI.CAdES.detached";
+    public static final String ADBE_PKCS7_DETACHED = "adbe.pkcs7.detached";
+
+    /**
+     * The SDK type that makes it write {@code /SubFilter /ETSI.CAdES.detached}
+     * when it hashes locally without upgrading anything. The SDK selects PAdES
+     * for any type containing {@code PAdES-B-}, and upgrades only for exactly
+     * {@link #PADES_LT}, {@link #PADES_LTV} and {@link #PADES_B_LTA}.
+     */
+    public static final String SDK_PADES_BASELINE = "PAdES-B-B";
+
+    /**
+     * @param configured {@code sub_filter}, if set
+     * @param level      configured {@code signature_level}
+     * @return {@link #ETSI_CADES_DETACHED} or {@link #ADBE_PKCS7_DETACHED}
+     */
+    public static String subFilter(String configured, String level) {
+        if (configured != null && !configured.isBlank()) {
+            String value = configured.trim();
+            if (value.equalsIgnoreCase(ETSI_CADES_DETACHED)) {
+                return ETSI_CADES_DETACHED;
+            }
+            if (value.equalsIgnoreCase(ADBE_PKCS7_DETACHED)) {
+                return ADBE_PKCS7_DETACHED;
+            }
+            throw new OrchestratorException(ErrorCode.UNSUPPORTED_SIGNATURE_LEVEL, "sub_filter " + value);
+        }
+        String normalised = level == null ? "" : level.trim().toUpperCase(Locale.ROOT);
+        // A PKCS7 level, or one that is explicitly not ETSI, asks for the
+        // Adobe form; every PAdES level is PAdES.
+        return normalised.startsWith("PKCS7") || normalised.startsWith("PDF_NOT_ETSI")
+                ? ADBE_PKCS7_DETACHED : ETSI_CADES_DETACHED;
+    }
 }

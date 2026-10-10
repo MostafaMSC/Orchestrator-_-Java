@@ -96,6 +96,10 @@ signing:
       # PAdES_BASELINE_B | _T are produced by the ADSS signing profile;
       # _LT and _LTA are requested here and need verification + TSA above.
       signature_level: PAdES_BASELINE_LTA
+      # /SubFilter of the signature, with local_hash: ETSI.CAdES.detached (PAdES)
+      # or adbe.pkcs7.detached. Left unset it follows signature_level: any
+      # PAdES_* level gives ETSI.CAdES.detached, a PKCS7_* level the Adobe form.
+      # sub_filter: ETSI.CAdES.detached
       signature_field_name: Signature1
       signing_page: 1
       container_type: NONE

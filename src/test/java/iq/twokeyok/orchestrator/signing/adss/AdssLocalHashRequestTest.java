@@ -74,10 +74,44 @@ class AdssLocalHashRequestTest {
         assertThat(Base64.getDecoder().decode(digest.group(1))).hasSize(digestLength);
     }
 
+    /**
+     * The SubFilter is written by the SDK into the document it prepares, so the
+     * prepared document is taken from the SDK request - a private field, read
+     * here only because there is no other way to see it before ADSS signs - and
+     * finished with a placeholder signature. The digest must stay SHA-256 too.
+     */
+    @ParameterizedTest
+    @CsvSource({"ETSI.CAdES.detached", "adbe.pkcs7.detached"})
+    void writesTheConfiguredSubFilter(String subFilter) throws Exception {
+        Path pdf = dir.resolve("unsigned-" + subFilter + ".pdf");
+        assertThat(TestPdfGenerator.generate(pdf.toString())).isZero();
+
+        AdssSigningBackend backend = new AdssSigningBackend(TestProperties.signing(Map.of()));
+        PdfSigningRequest request = backend.buildRequest(job("SHA256", subFilter, Files.readAllBytes(pdf)));
+        Path written = dir.resolve("request-" + subFilter + ".xml");
+        request.writeTo(written.toString());
+        Matcher digest = DIGEST.matcher(Files.readString(written, StandardCharsets.UTF_8));
+        assertThat(digest.find()).isTrue();
+        assertThat(Base64.getDecoder().decode(digest.group(1))).as("still SHA-256").hasSize(32);
+
+        java.lang.reflect.Field signers = PdfSigningRequest.class.getDeclaredField("m_listPdfSigners");
+        signers.setAccessible(true);
+        Object signer = ((List<?>) signers.get(request)).get(0);
+        signer.getClass().getMethod("embedSignature", byte[].class).invoke(signer, (Object) new byte[64]);
+        byte[] prepared = (byte[]) signer.getClass().getMethod("getSignedDocument").invoke(signer);
+        try (org.apache.pdfbox.pdmodel.PDDocument document = org.apache.pdfbox.pdmodel.PDDocument.load(prepared)) {
+            assertThat(document.getSignatureDictionaries().get(0).getSubFilter()).isEqualTo(subFilter);
+        }
+    }
+
     private static SignJob job(String algorithm, byte[] pdf) throws Exception {
+        return job(algorithm, "adbe.pkcs7.detached", pdf);
+    }
+
+    private static SignJob job(String algorithm, String subFilter, byte[] pdf) throws Exception {
         EffectiveSignerConfig config = new EffectiveSignerConfig(
                 "lab_eseal", SignerType.ESEAL, "Orchestrator-Signing", "adss:signing:profile:008",
-                "lab_alias", null, null, algorithm, null, 12000, "Signature1", 1,
+                "lab_alias", null, null, algorithm, null, subFilter, 12000, "Signature1", 1,
                 true, false, null, "NONE", null, TextDefaults.EMPTY, true, true, true);
         ResolvedAppearance appearance = new ResolvedAppearance(
                 "eseal_signature_appearance", appearanceXml(), "Lab e-Seal",

@@ -19,6 +19,7 @@ import iq.twokeyok.orchestrator.config.SigningProperties;
 import iq.twokeyok.orchestrator.error.ErrorCode;
 import iq.twokeyok.orchestrator.error.OrchestratorException;
 import iq.twokeyok.orchestrator.signing.EffectiveSignerConfig;
+import iq.twokeyok.orchestrator.signing.PadesLevel;
 import iq.twokeyok.orchestrator.signing.SignJob;
 import iq.twokeyok.orchestrator.signing.SignJob.SignResult;
 import iq.twokeyok.orchestrator.signing.SignJob.SignResult.SignedDocument;
@@ -57,12 +58,13 @@ public class AdssSigningBackend implements SigningBackend {
             // this process, whether the SDK hashes the PDF here - which needs
             // the named signature field to already exist in the document.
             log.info("[{}] Sending PAdES request to {}: signer={} type={} profile={} credential={} documents={}"
-                            + " local_hash={} compute_hash={} field={} page={} level={} appearance={}",
+                            + " local_hash={} compute_hash={} field={} page={} level={} sub_filter={} appearance={}",
                     job.requestId(), gateway.url(), config.signerId(), config.type(), config.profileId(),
                     config.certificateAlias() == null ? "<profile default>" : config.certificateAlias(),
                     job.documents().size(),
                     config.localHash(), config.computeHash(), config.signatureFieldName(), config.signingPage(),
                     config.padesSignatureType() == null ? "<profile default>" : config.padesSignatureType(),
+                    config.localHash() ? config.subFilter() : "<profile default>",
                     job.appearance() == null ? "none" : "resolved");
 
             PdfSigningResponse response = (PdfSigningResponse) request.send(gateway.url());
@@ -147,6 +149,14 @@ public class AdssSigningBackend implements SigningBackend {
         // The vendor's local-hash samples all set DETACHED for this reason.
         if (config.localHash()) {
             request.setPdfSignatureMode(PdfSigningRequest.SIGNATURE_MODE_DETACHED);
+            // Hashing here, the SDK writes the signature dictionary itself and
+            // picks /SubFilter from the PAdES type: none gives
+            // adbe.pkcs7.detached, a PAdES type gives ETSI.CAdES.detached. A
+            // baseline type selects PAdES without asking for an upgrade; an
+            // LT/LTA level sets its own type below and is PAdES already.
+            if (PadesLevel.ETSI_CADES_DETACHED.equals(config.subFilter()) && config.padesSignatureType() == null) {
+                request.setPadesSignatureType(PadesLevel.SDK_PADES_BASELINE);
+            }
         }
         request.setSignatureDictionarySize(config.signatureDictionarySize());
         request.setSigningField(config.signatureFieldName());

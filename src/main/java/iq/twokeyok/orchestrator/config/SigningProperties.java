@@ -174,6 +174,15 @@ public record SigningProperties(
              * {@code PadesLevel}.
              */
             @DefaultValue("PAdES_BASELINE_B") String signatureLevel,
+            /**
+             * {@code /SubFilter} of the PDF signature: {@code ETSI.CAdES.detached}
+             * (PAdES) or {@code adbe.pkcs7.detached}. Unset follows
+             * {@link #signatureLevel()}: a PAdES level means PAdES, a PKCS7 level
+             * means PKCS#7. Applies when {@code local_hash} is on, where this
+             * process writes the signature dictionary; otherwise the ADSS
+             * profile decides.
+             */
+            String subFilter,
             @DefaultValue("Signature1") String signatureFieldName,
             @DefaultValue("1") int signingPage,
             @DefaultValue("NONE") String containerType,
@@ -385,6 +394,7 @@ public record SigningProperties(
     public record SigningOverrides(
             String hashAlgorithm,
             String signatureLevel,
+            String subFilter,
             Integer dictionarySize,
             String signatureFieldName,
             Integer signingPage,

@@ -169,6 +169,7 @@ request is refused with `1029`.
 > where the key means "hash at document signing time"; here it only asks ADSS to
 > hand the hash back.
 | `signature_level` | `PAdES_BASELINE_B` | ETSI spelling; mapped onto the SDK's PAdES types — see below. |
+| `sub_filter` | follows `signature_level` | `/SubFilter` written with `local_hash`: `ETSI.CAdES.detached` for any `PAdES_*` level, `adbe.pkcs7.detached` for `PKCS7_*`. Set it to force one; overridable per client and signer (`overrides.sub-filter`). Without `local_hash` the ADSS profile decides. |
 | `signature_field_name` | `Signature1` | |
 | `signing_page` | `1` | Used when no appearance box says otherwise. |
 | `container_type` | `NONE` | `NONE`, `ASiC-S`, `ASiC-E`. |

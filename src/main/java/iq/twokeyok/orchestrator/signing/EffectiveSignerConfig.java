@@ -18,6 +18,7 @@ import iq.twokeyok.orchestrator.config.SigningProperties.SignerType;
  * @param hashAlgorithm      digest algorithm, e.g. {@code SHA384}
  * @param padesSignatureType SDK PAdES type, or {@code null} when the signing
  *                           profile determines the level
+ * @param subFilter          {@code ETSI.CAdES.detached} or {@code adbe.pkcs7.detached}
  * @param signatureDictionarySize reserved space for the signature dictionary
  * @param signatureFieldName name of the PDF signature field
  * @param signingPage        page the visible signature goes on
@@ -41,6 +42,7 @@ public record EffectiveSignerConfig(
         String credentialPassword,
         String hashAlgorithm,
         String padesSignatureType,
+        String subFilter,
         int signatureDictionarySize,
         String signatureFieldName,
         int signingPage,
@@ -60,21 +62,21 @@ public record EffectiveSignerConfig(
 
     public EffectiveSignerConfig withCredentialPassword(String pin) {
         return new EffectiveSignerConfig(signerId, type, adssClientId, profileId, certificateAlias, userId,
-                pin, hashAlgorithm, padesSignatureType, signatureDictionarySize, signatureFieldName, signingPage,
+                pin, hashAlgorithm, padesSignatureType, subFilter, signatureDictionarySize, signatureFieldName, signingPage,
                 localHash, computeHash, appearanceTemplate, containerType, dataToBeDisplayed, textDefaults,
                 allowRequestAppearance, allowRequestAppearanceTemplate, allowRequestContainerType);
     }
 
     public EffectiveSignerConfig withHashAlgorithm(String algorithm) {
         return new EffectiveSignerConfig(signerId, type, adssClientId, profileId, certificateAlias, userId,
-                credentialPassword, algorithm, padesSignatureType, signatureDictionarySize, signatureFieldName,
+                credentialPassword, algorithm, padesSignatureType, subFilter, signatureDictionarySize, signatureFieldName,
                 signingPage, localHash, computeHash, appearanceTemplate, containerType, dataToBeDisplayed,
                 textDefaults, allowRequestAppearance, allowRequestAppearanceTemplate, allowRequestContainerType);
     }
 
     public EffectiveSignerConfig withContainerType(String container) {
         return new EffectiveSignerConfig(signerId, type, adssClientId, profileId, certificateAlias, userId,
-                credentialPassword, hashAlgorithm, padesSignatureType, signatureDictionarySize, signatureFieldName,
+                credentialPassword, hashAlgorithm, padesSignatureType, subFilter, signatureDictionarySize, signatureFieldName,
                 signingPage, localHash, computeHash, appearanceTemplate, container, dataToBeDisplayed,
                 textDefaults, allowRequestAppearance, allowRequestAppearanceTemplate, allowRequestContainerType);
     }

@@ -103,6 +103,29 @@ class SignerResolverTest {
     }
 
     @Test
+    void aPadesLevelMeansThePadesSubFilter() {
+        config.put("signing.dss.signature.signature_level", "PAdES_BASELINE_B");
+        assertThat(resolver().resolve(AuthenticatedCaller.client("hr_portal"), "ministry_eseal", null)
+                .subFilter()).isEqualTo(PadesLevel.ETSI_CADES_DETACHED);
+
+        config.put("signing.dss.signature.signature_level", "PKCS7_B");
+        assertThat(resolver().resolve(AuthenticatedCaller.client("hr_portal"), "ministry_eseal", null)
+                .subFilter()).isEqualTo(PadesLevel.ADBE_PKCS7_DETACHED);
+    }
+
+    @Test
+    void anExplicitSubFilterWinsAndASignerMayOverrideIt() {
+        config.put("signing.dss.signature.signature_level", "PAdES_BASELINE_B");
+        config.put("signing.dss.signature.sub_filter", "adbe.pkcs7.detached");
+        assertThat(resolver().resolve(AuthenticatedCaller.client("hr_portal"), "ministry_eseal", null)
+                .subFilter()).isEqualTo(PadesLevel.ADBE_PKCS7_DETACHED);
+
+        config.put("signing.signers.ministry_eseal.overrides.sub-filter", "ETSI.CAdES.detached");
+        assertThat(resolver().resolve(AuthenticatedCaller.client("hr_portal"), "ministry_eseal", null)
+                .subFilter()).isEqualTo(PadesLevel.ETSI_CADES_DETACHED);
+    }
+
+    @Test
     void fallsBackToTheGatewayProfileWhenTheSignerHasNone() {
         EffectiveSignerConfig resolved = resolver().resolve(
                 AuthenticatedCaller.client("case_mgmt"), "john_doe", null);

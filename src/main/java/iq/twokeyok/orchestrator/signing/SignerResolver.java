@@ -88,6 +88,9 @@ public class SignerResolver {
                 pick(clientOverrides, signerOverrides, SigningOverrides::hashAlgorithm, defaults.hashAlgorithm()),
                 // Configured as an ETSI level; the SDK wants its own PAdES type.
                 PadesLevel.toSdkType(signatureLevel),
+                PadesLevel.subFilter(
+                        pick(clientOverrides, signerOverrides, SigningOverrides::subFilter, defaults.subFilter()),
+                        signatureLevel),
                 pick(clientOverrides, signerOverrides, SigningOverrides::dictionarySize, defaults.dictionarySize()),
                 pick(clientOverrides, signerOverrides, SigningOverrides::signatureFieldName, defaults.signatureFieldName()),
                 pick(clientOverrides, signerOverrides, SigningOverrides::signingPage, defaults.signingPage()),
