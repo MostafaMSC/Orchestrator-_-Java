@@ -61,6 +61,40 @@ differs from the token's signer, the request is rejected with `1104`.
 | `signature_appearance` | optional | JSON, see below. |
 | `hash_algo` | optional | `SHA1`, `SHA224`, `SHA256`, `SHA384`, `SHA512`, `SHA3-224`, `SHA3-256`, `SHA3-384`, `SHA3-512`. Overrides the configured digest. Spelling is flexible (`SHA-256`, `sha256`). |
 | `hashes`, `compute_hash` | — | Not enabled in this release; a request carrying `hashes` is rejected with `1118`. |
+| `document_timestamp` | optional | `false` returns the document signed only: no document timestamp, no `/DSS`. Use it for every signer but the last of a multi-signer document. Omitted: as configured (`dss.tsa.document_timestamp`). |
+
+### Several signers on one document
+
+Each signer is one request; the next signer sends the previous response as
+`input_files`. Only the last request adds the validation data and the document
+timestamp, so they seal every signature once:
+
+```
+request 1   document_timestamp=false   →  signature 1
+request 2   (default)                   →  signature 1, signature 2, /DSS, document timestamp
+```
+
+```bash
+curl -u 'client:secret' -F 'input_files=@contract.pdf' -F 'signer_id=first_signer' \
+  -F 'document_timestamp=false' -F 'signature_appearance={"signature_field":{"x":50,"y":60,"width":200,"height":80,"page_no":1}}' \
+  -o signed-once.pdf http://<host>/orchestrator/service/sign
+
+curl -u 'client:secret' -F 'input_files=@signed-once.pdf' -F 'signer_id=second_signer' \
+  -F 'signature_appearance={"signature_field":{"x":300,"y":60,"width":200,"height":80,"page_no":1}}' \
+  -o signed-twice.pdf http://<host>/orchestrator/service/sign
+```
+
+* **Give each signer its own box**, or the visible signatures overlap.
+* **Field names are handled for you.** If the configured `signature_field_name`
+  is already signed in the document, the next free name is used (`Signature2`
+  then `Signature3`, …).
+* **Earlier signatures stay intact.** With `local_hash`, the orchestrator appends
+  the new empty field to a signed document itself before the SDK signs into it.
+  The SDK creating the field rewrites the file and would destroy the earlier
+  signatures.
+* A document that already carries a document timestamp can be signed again too,
+  but its earlier timestamp then no longer seals the whole document; defer the
+  timestamp to the last signer as shown.
 
 ### Response
 

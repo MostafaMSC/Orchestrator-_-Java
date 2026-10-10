@@ -123,10 +123,26 @@ public class AdssSigningBackend implements SigningBackend {
         EffectiveSignerConfig config = job.config();
         List<SignJob.SignDocument> documents = job.documents();
 
-        PdfSigningRequest request =
-                new PdfSigningRequest(config.adssClientId(), documents.get(0).content());
-        for (int i = 1; i < documents.size(); i++) {
-            request.addDocument(documents.get(i).content());
+        // A document someone has signed already gets its new field from us,
+        // appended, because the SDK creating it rewrites the file and destroys
+        // the earlier signatures. See EmptySignatureField.
+        ResolvedAppearance.SignatureBox box = job.appearance() == null ? null : job.appearance().box();
+        boolean fieldPrepared = config.localHash() && box != null
+                && documents.stream().anyMatch(document -> EmptySignatureField.isSigned(document.content()));
+        List<byte[]> contents = new ArrayList<>(documents.size());
+        for (SignJob.SignDocument document : documents) {
+            contents.add(fieldPrepared
+                    ? EmptySignatureField.append(document.content(), config.signatureFieldName(), box)
+                    : document.content());
+        }
+        if (fieldPrepared) {
+            log.info("[{}] The document is signed already; signing into a new field '{}' appended to it",
+                    job.requestId(), config.signatureFieldName());
+        }
+
+        PdfSigningRequest request = new PdfSigningRequest(config.adssClientId(), contents.get(0));
+        for (int i = 1; i < contents.size(); i++) {
+            request.addDocument(contents.get(i));
         }
 
         request.setRequestMode(requestMode(properties.gateway().requestMode()));
@@ -162,7 +178,7 @@ public class AdssSigningBackend implements SigningBackend {
         request.setSigningField(config.signatureFieldName());
 
         applyIdentity(request, config);
-        applyAppearance(request, job.appearance(), config);
+        applyAppearance(request, job.appearance(), config, fieldPrepared);
         applyLongTerm(request, config);
         applyTransport(request);
 
@@ -194,7 +210,8 @@ public class AdssSigningBackend implements SigningBackend {
 
     private void applyAppearance(PdfSigningRequest request,
                                  ResolvedAppearance appearance,
-                                 EffectiveSignerConfig config) {
+                                 EffectiveSignerConfig config,
+                                 boolean fieldPrepared) {
         // An ADSS profile may own its appearances, in which case the request
         // names one and ADSS renders it. Sending an inline appearance document
         // as well is not additive — the two are alternatives.
@@ -235,8 +252,12 @@ public class AdssSigningBackend implements SigningBackend {
             // created locally when the orchestrator hashes the document itself,
             // otherwise ADSS places the visible signature server side.
             if (config.localHash()) {
-                request.addEmptySignatureFieldPosition(box.x(), box.y(), box.x2(), box.y2(),
-                        page, config.signatureFieldName());
+                // Already in the document when it was signed before; the SDK
+                // then fills that field rather than creating one.
+                if (!fieldPrepared) {
+                    request.addEmptySignatureFieldPosition(box.x(), box.y(), box.x2(), box.y2(),
+                            page, config.signatureFieldName());
+                }
             } else {
                 // The last argument is the ADSS-side appearance name. A working
                 // integration against this platform passes a real name here;

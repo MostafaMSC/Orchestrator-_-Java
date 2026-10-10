@@ -17,6 +17,7 @@ import com.ascertia.adss.client.api.signing.PdfSigningRequest;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -101,6 +102,97 @@ class AdssLocalHashRequestTest {
         byte[] prepared = (byte[]) signer.getClass().getMethod("getSignedDocument").invoke(signer);
         try (org.apache.pdfbox.pdmodel.PDDocument document = org.apache.pdfbox.pdmodel.PDDocument.load(prepared)) {
             assertThat(document.getSignatureDictionaries().get(0).getSubFilter()).isEqualTo(subFilter);
+        }
+    }
+
+    /**
+     * The second signer of a two-signature workflow sends back the first
+     * signer's output. The SDK must append to it - every byte of the signed
+     * document kept, so the first signature stays valid - and the new signature
+     * must go into a field of its own.
+     */
+    @Test
+    void signsADocumentSomeoneHasAlreadySigned() throws Exception {
+        Path pdf = dir.resolve("unsigned-for-two.pdf");
+        assertThat(TestPdfGenerator.generate(pdf.toString())).isZero();
+        byte[] firstSigned = signLocally(Files.readAllBytes(pdf), "Signature1");
+
+        SignJob.SignDocument document = new SignJob.SignDocument("signed-once.pdf", "application/pdf", firstSigned);
+        String field = iq.twokeyok.orchestrator.signing.SignatureFieldNames.choose("Signature1", List.of(document));
+        assertThat(field).isEqualTo("Signature2");
+
+        SignJob second = job("SHA256", "ETSI.CAdES.detached", firstSigned);
+        second = new SignJob(second.requestId(), second.config().withSignatureFieldName(field),
+                second.appearance(), second.documents());
+        PdfSigningRequest request = new AdssSigningBackend(TestProperties.signing(Map.of())).buildRequest(second);
+        request.writeTo(dir.resolve("request-second.xml").toString());
+
+        java.lang.reflect.Field signers = PdfSigningRequest.class.getDeclaredField("m_listPdfSigners");
+        signers.setAccessible(true);
+        Object signer = ((List<?>) signers.get(request)).get(0);
+        signer.getClass().getMethod("embedSignature", byte[].class).invoke(signer, (Object) new byte[64]);
+        byte[] twice = (byte[]) signer.getClass().getMethod("getSignedDocument").invoke(signer);
+
+        assertThat(java.util.Arrays.copyOf(twice, firstSigned.length))
+                .as("the first signed document is kept byte for byte").isEqualTo(firstSigned);
+        try (org.apache.pdfbox.pdmodel.PDDocument loaded = org.apache.pdfbox.pdmodel.PDDocument.load(twice)) {
+            assertThat(loaded.getSignatureDictionaries()).hasSize(2);
+            assertThat(loaded.getSignatureDictionaries().get(1).getSubFilter()).isEqualTo("ETSI.CAdES.detached");
+            assertThat(loaded.getDocumentCatalog().getAcroForm().getField("Signature2")).isNotNull();
+
+            // And the first signature still verifies over its bytes.
+            org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature first =
+                    loaded.getSignatureDictionaries().get(0);
+            org.bouncycastle.cms.CMSSignedData cms = new org.bouncycastle.cms.CMSSignedData(
+                    new org.bouncycastle.cms.CMSProcessableByteArray(first.getSignedContent(twice)),
+                    first.getContents(twice));
+            org.bouncycastle.cms.SignerInformation signerInfo = cms.getSignerInfos().getSigners().iterator().next();
+            org.bouncycastle.cert.X509CertificateHolder certificate = (org.bouncycastle.cert.X509CertificateHolder)
+                    cms.getCertificates().getMatches(signerInfo.getSID()).iterator().next();
+            assertThat(signerInfo.verify(new org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder()
+                    .setProvider("BC").build(certificate))).as("first signature intact").isTrue();
+        }
+    }
+
+    /** An ordinary detached signature in {@code field}, as the first signer's request would return. */
+    private static byte[] signLocally(byte[] pdf, String field) throws Exception {
+        java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        java.security.KeyPair keys = generator.generateKeyPair();
+        org.bouncycastle.asn1.x500.X500Name name = new org.bouncycastle.asn1.x500.X500Name("CN=First signer");
+        org.bouncycastle.cert.X509CertificateHolder certificate = new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
+                name, java.math.BigInteger.ONE, new java.util.Date(System.currentTimeMillis() - 86_400_000L),
+                new java.util.Date(System.currentTimeMillis() + 86_400_000L), name, keys.getPublic())
+                .build(new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withRSA").build(keys.getPrivate()));
+        try (org.apache.pdfbox.pdmodel.PDDocument document = org.apache.pdfbox.pdmodel.PDDocument.load(pdf)) {
+            org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature signature =
+                    new org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature();
+            signature.setFilter(org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature.FILTER_ADOBE_PPKLITE);
+            signature.setSubFilter(org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature.SUBFILTER_ADBE_PKCS7_DETACHED);
+            signature.setName(field);
+            signature.setSignDate(java.util.Calendar.getInstance());
+            org.apache.pdfbox.pdmodel.interactive.digitalsignature.SignatureOptions options =
+                    new org.apache.pdfbox.pdmodel.interactive.digitalsignature.SignatureOptions();
+            document.addSignature(signature, content -> {
+                try {
+                    org.bouncycastle.cms.CMSSignedDataGenerator cms = new org.bouncycastle.cms.CMSSignedDataGenerator();
+                    cms.addSignerInfoGenerator(new org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder(
+                            new org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder().build())
+                            .build(new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withRSA")
+                                    .build(keys.getPrivate()), certificate));
+                    // As ADSS does: the SDK reads existing signatures and needs their certificate.
+                    cms.addCertificate(certificate);
+                    return cms.generate(new org.bouncycastle.cms.CMSProcessableByteArray(content.readAllBytes()), false)
+                            .getEncoded();
+                } catch (Exception e) {
+                    throw new java.io.IOException(e);
+                }
+            }, options);
+            // PDFBox names the field it creates; make it the one the test expects.
+            document.getDocumentCatalog().getAcroForm().getFields().get(0).setPartialName(field);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            document.saveIncremental(out);
+            return out.toByteArray();
         }
     }
 

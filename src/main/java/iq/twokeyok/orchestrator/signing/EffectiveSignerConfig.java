@@ -74,6 +74,13 @@ public record EffectiveSignerConfig(
                 textDefaults, allowRequestAppearance, allowRequestAppearanceTemplate, allowRequestContainerType);
     }
 
+    public EffectiveSignerConfig withSignatureFieldName(String fieldName) {
+        return new EffectiveSignerConfig(signerId, type, adssClientId, profileId, certificateAlias, userId,
+                credentialPassword, hashAlgorithm, padesSignatureType, subFilter, signatureDictionarySize, fieldName,
+                signingPage, localHash, computeHash, appearanceTemplate, containerType, dataToBeDisplayed,
+                textDefaults, allowRequestAppearance, allowRequestAppearanceTemplate, allowRequestContainerType);
+    }
+
     public EffectiveSignerConfig withContainerType(String container) {
         return new EffectiveSignerConfig(signerId, type, adssClientId, profileId, certificateAlias, userId,
                 credentialPassword, hashAlgorithm, padesSignatureType, subFilter, signatureDictionarySize, signatureFieldName,

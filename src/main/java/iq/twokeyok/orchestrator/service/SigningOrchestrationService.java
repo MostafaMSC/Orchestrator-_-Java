@@ -28,6 +28,7 @@ import iq.twokeyok.orchestrator.signing.EffectiveSignerConfig;
 import iq.twokeyok.orchestrator.signing.SignJob;
 import iq.twokeyok.orchestrator.signing.SignJob.SignDocument;
 import iq.twokeyok.orchestrator.signing.SignJob.SignResult;
+import iq.twokeyok.orchestrator.signing.SignatureFieldNames;
 import iq.twokeyok.orchestrator.signing.SignerResolver;
 import iq.twokeyok.orchestrator.signing.SigningBackend;
 import iq.twokeyok.orchestrator.signing.timestamp.DocumentTimestamper;
@@ -98,6 +99,10 @@ public class SigningOrchestrationService {
         EffectiveSignerConfig config = signerResolver.resolve(
                 caller, command.signerId(), command.credentialId());
         config = applyRequestOverrides(config, command, caller);
+        // A document someone has signed already goes into a new field, so a
+        // second signer can sign the first signer's output.
+        config = config.withSignatureFieldName(
+                SignatureFieldNames.choose(config.signatureFieldName(), documents));
 
         ResolvedAppearance appearance = appearanceService.resolve(
                 config.appearanceTemplate(),
@@ -115,7 +120,13 @@ public class SigningOrchestrationService {
             SignResult result = signingBackend.signPades(job);
             // The archive timestamp covers the finished signature, so it is
             // added after the backend and before anything is packaged.
-            List<SignJob.SignResult.SignedDocument> signed = documentTimestamper.isEnabled()
+            // A request may defer it, so that the archive timestamp follows the
+            // last of several signatures rather than each of them.
+            boolean timestamp = documentTimestamper.isEnabled() && !Boolean.FALSE.equals(command.documentTimestamp());
+            if (documentTimestamper.isEnabled() && !timestamp) {
+                log.info("[{}] Document timestamp deferred by the request (document_timestamp=false)", requestId);
+            }
+            List<SignJob.SignResult.SignedDocument> signed = timestamp
                     ? documentTimestamper.timestampAll(result.documents(), requestId)
                     : result.documents();
             ContainerPackager.Payload payload = packager.pack(signed, config.containerType());
@@ -293,6 +304,13 @@ public class SigningOrchestrationService {
                               String hashAlgo,
                               String computeHash,
                               String containerType,
-                              String signatureAppearance) {
+                              String signatureAppearance,
+                              /**
+                               * {@code false} returns the document signed only, without
+                               * the document timestamp and its validation data, so that
+                               * a further signature can follow and the last request
+                               * timestamps once. {@code null} follows the configuration.
+                               */
+                              Boolean documentTimestamp) {
     }
 }

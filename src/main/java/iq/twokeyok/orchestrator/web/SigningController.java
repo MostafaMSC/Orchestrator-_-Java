@@ -50,10 +50,11 @@ public class SigningController {
             @RequestParam(value = "hash_algo", required = false) String hashAlgo,
             @RequestParam(value = "compute_hash", required = false) String computeHash,
             @RequestParam(value = "container_type", required = false) String containerType,
-            @RequestParam(value = "signature_appearance", required = false) String signatureAppearance) {
+            @RequestParam(value = "signature_appearance", required = false) String signatureAppearance,
+            @RequestParam(value = "document_timestamp", required = false) Boolean documentTimestamp) {
 
         SignCommand command = new SignCommand(inputFiles, signerId, pin, credentialId,
-                hashes, hashAlgo, computeHash, containerType, signatureAppearance);
+                hashes, hashAlgo, computeHash, containerType, signatureAppearance, documentTimestamp);
 
         ContainerPackager.Payload payload =
                 signingService.sign(CallerContext.require(httpRequest), command);
