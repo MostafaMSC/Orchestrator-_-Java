@@ -1,6 +1,5 @@
 package iq.twokeyok.orchestrator.signing.adss;
 
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.Security;
@@ -67,9 +66,7 @@ class AdssLocalHashRequestTest {
         AdssSigningBackend backend = new AdssSigningBackend(TestProperties.signing(Map.of()));
         PdfSigningRequest request = backend.buildRequest(job(algorithm, Files.readAllBytes(pdf)));
 
-        Path written = dir.resolve("request-" + algorithm + ".xml");
-        request.writeTo(written.toString());
-        Matcher digest = DIGEST.matcher(Files.readString(written, StandardCharsets.UTF_8));
+        Matcher digest = DIGEST.matcher(prepare(request));
 
         assertThat(digest.find()).as("the request carries a document digest").isTrue();
         assertThat(Base64.getDecoder().decode(digest.group(1))).hasSize(digestLength);
@@ -89,9 +86,7 @@ class AdssLocalHashRequestTest {
 
         AdssSigningBackend backend = new AdssSigningBackend(TestProperties.signing(Map.of()));
         PdfSigningRequest request = backend.buildRequest(job("SHA256", subFilter, Files.readAllBytes(pdf)));
-        Path written = dir.resolve("request-" + subFilter + ".xml");
-        request.writeTo(written.toString());
-        Matcher digest = DIGEST.matcher(Files.readString(written, StandardCharsets.UTF_8));
+        Matcher digest = DIGEST.matcher(prepare(request));
         assertThat(digest.find()).isTrue();
         assertThat(Base64.getDecoder().decode(digest.group(1))).as("still SHA-256").hasSize(32);
 
@@ -125,7 +120,7 @@ class AdssLocalHashRequestTest {
         second = new SignJob(second.requestId(), second.config().withSignatureFieldName(field),
                 second.appearance(), second.documents());
         PdfSigningRequest request = new AdssSigningBackend(TestProperties.signing(Map.of())).buildRequest(second);
-        request.writeTo(dir.resolve("request-second.xml").toString());
+        prepare(request);
 
         java.lang.reflect.Field signers = PdfSigningRequest.class.getDeclaredField("m_listPdfSigners");
         signers.setAccessible(true);
@@ -169,8 +164,8 @@ class AdssLocalHashRequestTest {
         second = new SignJob(second.requestId(), second.config().withSignatureFieldName("Signature2"),
                 second.appearance(), second.documents());
         PdfSigningRequest request = new AdssSigningBackend(TestProperties.signing(Map.of())).buildRequest(second);
-        // Hashing - where the SDK read the /DSS and failed - happens on writing.
-        request.writeTo(dir.resolve("request-dss.xml").toString());
+        // Hashing - where the SDK read the /DSS and failed - happens here.
+        prepare(request);
 
         java.lang.reflect.Field signers = PdfSigningRequest.class.getDeclaredField("m_listPdfSigners");
         signers.setAccessible(true);
@@ -248,6 +243,22 @@ class AdssLocalHashRequestTest {
             document.saveIncremental(out);
             return out.toByteArray();
         }
+    }
+
+    /**
+     * Prepares the request the way {@code send} does - computing the local hash
+     * into the DSS request - and returns that request as XML. {@code writeTo}
+     * would be simpler but takes an iText path the 8.3.x SDK otherwise never
+     * needs, and this build ships no iText.
+     */
+    private static String prepare(PdfSigningRequest request) throws Exception {
+        java.lang.reflect.Method toDss = PdfSigningRequest.class.getDeclaredMethod("toDSS");
+        toDss.setAccessible(true);
+        org.w3c.dom.Document xml = (org.w3c.dom.Document) toDss.invoke(request);
+        java.io.StringWriter out = new java.io.StringWriter();
+        javax.xml.transform.TransformerFactory.newInstance().newTransformer().transform(
+                new javax.xml.transform.dom.DOMSource(xml), new javax.xml.transform.stream.StreamResult(out));
+        return out.toString();
     }
 
     private static SignJob job(String algorithm, byte[] pdf) throws Exception {
