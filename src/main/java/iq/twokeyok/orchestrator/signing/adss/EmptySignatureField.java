@@ -54,9 +54,10 @@ final class EmptySignatureField {
                 form = new PDAcroForm(document);
                 document.getDocumentCatalog().setAcroForm(form);
             }
+            boolean vriAdded = addEmptyVri(document);
             for (PDField existing : form.getFieldTree()) {
                 if (name.equals(existing.getFullyQualifiedName())) {
-                    return pdf;
+                    return vriAdded ? save(document, pdf.length) : pdf;
                 }
             }
             int pageIndex = Math.max(1, Math.min(box.pageNo(), document.getNumberOfPages())) - 1;
@@ -84,10 +85,34 @@ final class EmptySignatureField {
             annotations.setNeedToBeUpdated(true);
             field.getCOSObject().setNeedToBeUpdated(true);
 
-            ByteArrayOutputStream out = new ByteArrayOutputStream(pdf.length + 4096);
-            document.saveIncremental(out);
-            return out.toByteArray();
+            return save(document, pdf.length);
         }
+    }
+
+    /**
+     * The ADSS SDK reads {@code /DSS /VRI} without a null check whenever the
+     * {@code /DSS} has no {@code /CRLs}, so a document whose /DSS lacks /VRI
+     * (ours before it wrote one, among others) fails with a NullPointerException.
+     * An empty /VRI is valid PDF and lets the SDK through.
+     *
+     * @return whether one was added
+     */
+    private static boolean addEmptyVri(PDDocument document) {
+        COSDictionary catalog = document.getDocumentCatalog().getCOSObject();
+        if (!(catalog.getDictionaryObject(COSName.getPDFName("DSS")) instanceof COSDictionary dss)
+                || dss.getDictionaryObject(COSName.getPDFName("VRI")) instanceof COSDictionary) {
+            return false;
+        }
+        dss.setItem(COSName.getPDFName("VRI"), new COSDictionary());
+        catalog.setNeedToBeUpdated(true);
+        dss.setNeedToBeUpdated(true);
+        return true;
+    }
+
+    private static byte[] save(PDDocument document, int length) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream(length + 4096);
+        document.saveIncremental(out);
+        return out.toByteArray();
     }
 
     private static COSArray arrayIn(COSDictionary dictionary, COSName key) {

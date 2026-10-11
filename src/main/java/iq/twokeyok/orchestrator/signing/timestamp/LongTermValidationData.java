@@ -369,6 +369,12 @@ public class LongTermValidationData {
             for (byte[] response : responses) {
                 ocsps.add(stream(document, response));
             }
+            // /VRI is optional, but the ADSS SDK reads it without a null check
+            // when /DSS has no /CRLs: without one, the document cannot be signed
+            // again. An empty dictionary is valid and keeps the SDK happy.
+            if (asDictionary(dss.getDictionaryObject(COSName.getPDFName("VRI"))) == null) {
+                dss.setItem(COSName.getPDFName("VRI"), new COSDictionary());
+            }
             declareExtension(catalog);
 
             // An incremental save writes only what is marked as changed.

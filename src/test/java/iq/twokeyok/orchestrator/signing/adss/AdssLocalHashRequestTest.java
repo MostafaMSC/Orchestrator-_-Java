@@ -154,6 +154,60 @@ class AdssLocalHashRequestTest {
         }
     }
 
+    /**
+     * A document that has been through the orchestrator already carries our
+     * /DSS. Written without /VRI or /CRLs - as earlier versions did - it made
+     * the SDK fail with a NullPointerException; it must be signable again.
+     */
+    @Test
+    void signsADocumentWhoseDssHasNoVri() throws Exception {
+        Path pdf = dir.resolve("unsigned-for-dss.pdf");
+        assertThat(TestPdfGenerator.generate(pdf.toString())).isZero();
+        byte[] withDss = dssWithoutVri(signLocally(Files.readAllBytes(pdf), "Signature1"));
+
+        SignJob second = job("SHA256", "ETSI.CAdES.detached", withDss);
+        second = new SignJob(second.requestId(), second.config().withSignatureFieldName("Signature2"),
+                second.appearance(), second.documents());
+        PdfSigningRequest request = new AdssSigningBackend(TestProperties.signing(Map.of())).buildRequest(second);
+        // Hashing - where the SDK read the /DSS and failed - happens on writing.
+        request.writeTo(dir.resolve("request-dss.xml").toString());
+
+        java.lang.reflect.Field signers = PdfSigningRequest.class.getDeclaredField("m_listPdfSigners");
+        signers.setAccessible(true);
+        Object signer = ((List<?>) signers.get(request)).get(0);
+        signer.getClass().getMethod("embedSignature", byte[].class).invoke(signer, (Object) new byte[64]);
+        byte[] twice = (byte[]) signer.getClass().getMethod("getSignedDocument").invoke(signer);
+
+        assertThat(java.util.Arrays.copyOf(twice, withDss.length))
+                .as("the document and its /DSS are kept byte for byte").isEqualTo(withDss);
+        try (org.apache.pdfbox.pdmodel.PDDocument loaded = org.apache.pdfbox.pdmodel.PDDocument.load(twice)) {
+            assertThat(loaded.getSignatureDictionaries()).hasSize(2);
+        }
+    }
+
+    /** {@code pdf} with a /DSS holding only /Certs, appended incrementally. */
+    private static byte[] dssWithoutVri(byte[] pdf) throws Exception {
+        try (org.apache.pdfbox.pdmodel.PDDocument document = org.apache.pdfbox.pdmodel.PDDocument.load(pdf)) {
+            org.apache.pdfbox.cos.COSDictionary catalog = document.getDocumentCatalog().getCOSObject();
+            org.apache.pdfbox.cos.COSDictionary dss = new org.apache.pdfbox.cos.COSDictionary();
+            org.apache.pdfbox.cos.COSArray certs = new org.apache.pdfbox.cos.COSArray();
+            org.apache.pdfbox.cos.COSStream cert = document.getDocument().createCOSStream();
+            try (java.io.OutputStream out = cert.createOutputStream()) {
+                out.write(new byte[] {0x30, 0x00});
+            }
+            certs.add(cert);
+            dss.setItem(org.apache.pdfbox.cos.COSName.getPDFName("Certs"), certs);
+            catalog.setItem(org.apache.pdfbox.cos.COSName.getPDFName("DSS"), dss);
+            catalog.setNeedToBeUpdated(true);
+            dss.setNeedToBeUpdated(true);
+            certs.setNeedToBeUpdated(true);
+            cert.setNeedToBeUpdated(true);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            document.saveIncremental(out);
+            return out.toByteArray();
+        }
+    }
+
     /** An ordinary detached signature in {@code field}, as the first signer's request would return. */
     private static byte[] signLocally(byte[] pdf, String field) throws Exception {
         java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
