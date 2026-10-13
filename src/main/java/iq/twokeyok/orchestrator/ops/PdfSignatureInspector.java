@@ -9,6 +9,9 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSBase;
+import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
@@ -92,8 +95,9 @@ public final class PdfSignatureInspector {
                 }
 
                 out.add("  Signatures: " + signatures.size());
-                boolean hasDss = document.getDocumentCatalog().getCOSObject()
-                        .getDictionaryObject(COSName.getPDFName("DSS")) != null;
+                COSBase dssBase = document.getDocumentCatalog().getCOSObject()
+                        .getDictionaryObject(COSName.getPDFName("DSS"));
+                boolean hasDss = dssBase != null;
 
                 boolean allVerified = true;
                 int documentSignatures = 0;
@@ -143,6 +147,7 @@ public final class PdfSignatureInspector {
                 out.add("  ByteRange covers whole file : " + (coversWholeFile(signatures, bytes.length)
                         ? "yes" : "NO — content exists outside the signed ranges"));
                 out.add("  /DSS validation material    : " + (hasDss ? "present (LT / LTV)" : "absent"));
+                describeDss(dssBase, documentSignatures, out);
                 out.add("  Document signatures         : " + documentSignatures);
                 out.add("  Document timestamps         : " + documentTimestamps
                         + (documentTimestamps > 0 ? "  (PAdES-LTA)" : ""));
@@ -451,6 +456,55 @@ public final class PdfSignatureInspector {
             }
         }
         return "?";
+    }
+
+    /**
+     * What the {@code /DSS} actually holds, not merely that it exists.
+     *
+     * <p>"present" is not enough to judge a long-term signature. PAdES-LT
+     * requires revocation data for <em>every</em> certificate in the chain, and
+     * each signature added to a document needs its own, because a later
+     * signature cannot be covered by material collected before it existed. The
+     * per-signature detail lives in {@code /VRI}, keyed by the hex SHA-1 of each
+     * signature's {@code /Contents}, so a document with four signatures and one
+     * {@code /VRI} entry has three signatures with no validation material of
+     * their own - which reads identically to a complete one until the contents
+     * are counted.</p>
+     */
+    private static void describeDss(COSBase dssBase, int documentSignatures, List<String> out) {
+        if (!(dssBase instanceof COSDictionary dss)) {
+            return;
+        }
+        out.add("    certificates              : " + arraySize(dss, "Certs"));
+        out.add("    OCSP responses            : " + arraySize(dss, "OCSPs"));
+        out.add("    CRLs                      : " + arraySize(dss, "CRLs"));
+
+        COSBase vriBase = dss.getDictionaryObject(COSName.getPDFName("VRI"));
+        if (!(vriBase instanceof COSDictionary vri)) {
+            out.add("    per-signature (/VRI)      : absent"
+                    + (documentSignatures > 1
+                            ? " — with " + documentSignatures + " signatures, none has its own material"
+                            : ""));
+            return;
+        }
+        int entries = vri.keySet().size();
+        out.add("    per-signature (/VRI)      : " + entries + " entr" + (entries == 1 ? "y" : "ies")
+                + (entries < documentSignatures
+                        ? " — fewer than the " + documentSignatures + " signatures: the later ones carry none"
+                        : ""));
+        for (COSName key : vri.keySet()) {
+            COSBase entry = vri.getDictionaryObject(key);
+            if (entry instanceof COSDictionary signatureVri) {
+                out.add("      " + key.getName() + "  certs=" + arraySize(signatureVri, "Cert")
+                        + " ocsp=" + arraySize(signatureVri, "OCSP")
+                        + " crl=" + arraySize(signatureVri, "CRL"));
+            }
+        }
+    }
+
+    private static int arraySize(COSDictionary dictionary, String key) {
+        COSBase value = dictionary.getDictionaryObject(COSName.getPDFName(key));
+        return value instanceof COSArray array ? array.size() : 0;
     }
 
     /** A signature timestamp lives as an unsigned attribute on the SignerInfo. */
