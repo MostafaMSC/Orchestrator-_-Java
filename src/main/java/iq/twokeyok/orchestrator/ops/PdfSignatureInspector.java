@@ -1,6 +1,8 @@
 package iq.twokeyok.orchestrator.ops;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.security.Security;
@@ -13,6 +15,7 @@ import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget;
@@ -21,10 +24,18 @@ import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm;
 import org.apache.pdfbox.pdmodel.interactive.form.PDField;
 import org.apache.pdfbox.pdmodel.interactive.form.PDSignatureField;
 
+import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.cms.AttributeTable;
 import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
+import org.bouncycastle.asn1.x500.RDN;
+import org.bouncycastle.asn1.x500.style.BCStyle;
+import org.bouncycastle.asn1.x500.style.IETFUtils;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.ocsp.BasicOCSPResp;
+import org.bouncycastle.cert.ocsp.OCSPResp;
+import org.bouncycastle.cert.ocsp.RevokedStatus;
+import org.bouncycastle.cert.ocsp.SingleResp;
 import org.bouncycastle.cms.CMSProcessableByteArray;
 import org.bouncycastle.cms.CMSSignedData;
 import org.bouncycastle.cms.SignerInformation;
@@ -32,6 +43,8 @@ import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.tsp.TimeStampToken;
 import org.bouncycastle.tsp.TimeStampTokenInfo;
+
+import iq.twokeyok.orchestrator.signing.timestamp.OcspClient;
 
 /**
  * {@code --verify-pdf <file>} — checks that a PDF really carries a digital
@@ -59,6 +72,8 @@ public final class PdfSignatureInspector {
      * ADSS signing profiles configured for {@code adbe.pkcs7.sha1} produce it.
      */
     private static final String PKCS7_SHA1_SUBFILTER = "adbe.pkcs7.sha1";
+    /** RFC 6960 id-pkix-ocsp-nocheck: a responder whose own status is not checked. */
+    private static final ASN1ObjectIdentifier OCSP_NOCHECK = new ASN1ObjectIdentifier("1.3.6.1.5.5.7.48.1.5");
 
     private PdfSignatureInspector() {
     }
@@ -147,7 +162,7 @@ public final class PdfSignatureInspector {
                 out.add("  ByteRange covers whole file : " + (coversWholeFile(signatures, bytes.length)
                         ? "yes" : "NO — content exists outside the signed ranges"));
                 out.add("  /DSS validation material    : " + (hasDss ? "present (LT / LTV)" : "absent"));
-                describeDss(dssBase, documentSignatures, out);
+                describeDss(dssBase, out);
                 out.add("  Document signatures         : " + documentSignatures);
                 out.add("  Document timestamps         : " + documentTimestamps
                         + (documentTimestamps > 0 ? "  (PAdES-LTA)" : ""));
@@ -461,45 +476,173 @@ public final class PdfSignatureInspector {
     /**
      * What the {@code /DSS} actually holds, not merely that it exists.
      *
-     * <p>"present" is not enough to judge a long-term signature. PAdES-LT
-     * requires revocation data for <em>every</em> certificate in the chain, and
-     * each signature added to a document needs its own, because a later
-     * signature cannot be covered by material collected before it existed. The
-     * per-signature detail lives in {@code /VRI}, keyed by the hex SHA-1 of each
-     * signature's {@code /Contents}, so a document with four signatures and one
-     * {@code /VRI} entry has three signatures with no validation material of
-     * their own - which reads identically to a complete one until the contents
-     * are counted.</p>
+     * <p>"present" is not enough to judge a long-term signature: PAdES-LT
+     * requires revocation data for <em>every</em> certificate in every chain,
+     * and a count of responses cannot say which certificates they answer for.
+     * So each certificate is listed with the response that covers it, the
+     * status that response reports, and the responder that signed it.</p>
+     *
+     * <p>{@code /VRI} keys the same material per signature, by the hex SHA-1 of
+     * each signature's {@code /Contents}. It is optional - ETSI EN 319 142-1
+     * lets a reader take what it needs from {@code /Certs} and {@code /OCSPs}
+     * directly - so an empty one is reported plainly rather than as a fault.</p>
      */
-    private static void describeDss(COSBase dssBase, int documentSignatures, List<String> out) {
+    private static void describeDss(COSBase dssBase, List<String> out) {
         if (!(dssBase instanceof COSDictionary dss)) {
             return;
         }
         out.add("    certificates              : " + arraySize(dss, "Certs"));
         out.add("    OCSP responses            : " + arraySize(dss, "OCSPs"));
         out.add("    CRLs                      : " + arraySize(dss, "CRLs"));
+        describeVri(dss, out);
+        describeRevocationCoverage(dss, out);
+    }
 
-        COSBase vriBase = dss.getDictionaryObject(COSName.getPDFName("VRI"));
-        if (!(vriBase instanceof COSDictionary vri)) {
-            out.add("    per-signature (/VRI)      : absent"
-                    + (documentSignatures > 1
-                            ? " — with " + documentSignatures + " signatures, none has its own material"
-                            : ""));
+    private static void describeVri(COSDictionary dss, List<String> out) {
+        String optional = "  (optional; readers may use /Certs and /OCSPs directly)";
+        if (!(dss.getDictionaryObject(COSName.getPDFName("VRI")) instanceof COSDictionary vri)) {
+            out.add("    per-signature (/VRI)      : absent" + optional);
             return;
         }
         int entries = vri.keySet().size();
         out.add("    per-signature (/VRI)      : " + entries + " entr" + (entries == 1 ? "y" : "ies")
-                + (entries < documentSignatures
-                        ? " — fewer than the " + documentSignatures + " signatures: the later ones carry none"
-                        : ""));
+                + (entries == 0 ? optional : ""));
         for (COSName key : vri.keySet()) {
-            COSBase entry = vri.getDictionaryObject(key);
-            if (entry instanceof COSDictionary signatureVri) {
+            if (vri.getDictionaryObject(key) instanceof COSDictionary signatureVri) {
                 out.add("      " + key.getName() + "  certs=" + arraySize(signatureVri, "Cert")
                         + " ocsp=" + arraySize(signatureVri, "OCSP")
                         + " crl=" + arraySize(signatureVri, "CRL"));
             }
         }
+    }
+
+    /**
+     * Which certificate each OCSP response answers for - the question a count
+     * of responses leaves open. A root needs none, and neither does a responder
+     * certificate carrying id-pkix-ocsp-nocheck, so those are named rather than
+     * counted as gaps; anything else without a response is called out.
+     */
+    private static void describeRevocationCoverage(COSDictionary dss, List<String> out) {
+        List<X509CertificateHolder> certificates;
+        List<BasicOCSPResp> responses = new ArrayList<>();
+        try {
+            certificates = distinctCertificates(dssStreams(dss, "Certs"));
+            for (byte[] encoded : dssStreams(dss, "OCSPs")) {
+                try {
+                    responses.add((BasicOCSPResp) new OCSPResp(encoded).getResponseObject());
+                } catch (Exception e) {
+                    out.add("    ! an entry in /OCSPs cannot be read: " + e.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            out.add("    ! /DSS cannot be read: " + e.getMessage());
+            return;
+        }
+        if (certificates.isEmpty()) {
+            return;
+        }
+        out.add("    revocation coverage       :");
+        for (X509CertificateHolder certificate : certificates) {
+            out.add("      " + shortName(certificate) + "  -  " + coverageOf(certificate, certificates, responses));
+        }
+    }
+
+    private static String coverageOf(X509CertificateHolder certificate,
+                                     List<X509CertificateHolder> certificates,
+                                     List<BasicOCSPResp> responses) {
+        for (BasicOCSPResp response : responses) {
+            SingleResp single = entryFor(response, certificate, certificates);
+            if (single != null) {
+                return statusOf(single) + ", signed by " + responderOf(response);
+            }
+        }
+        if (OcspClient.isSelfSigned(certificate)) {
+            return "root, no response needed";
+        }
+        if (certificate.getExtension(OCSP_NOCHECK) != null) {
+            return "OCSP responder (ocsp-nocheck), no response needed";
+        }
+        return "NO OCSP RESPONSE";
+    }
+
+    /**
+     * The entry about this certificate, matched the way RFC 6960 requires: the
+     * serial together with a hash of the issuer's name and key. When the issuer
+     * is not in {@code /Certs} that hash cannot be recomputed, and a serial
+     * match is all this report can offer.
+     */
+    private static SingleResp entryFor(BasicOCSPResp response, X509CertificateHolder certificate,
+                                       List<X509CertificateHolder> certificates) {
+        for (X509CertificateHolder candidate : certificates) {
+            if (!candidate.getSubject().equals(certificate.getIssuer())) {
+                continue;
+            }
+            try {
+                SingleResp single = OcspClient.find(response, certificate, candidate);
+                if (single != null) {
+                    return single;
+                }
+            } catch (Exception e) {
+                // Try the next candidate issuer, then fall back to the serial.
+            }
+        }
+        for (SingleResp single : response.getResponses()) {
+            if (single.getCertID().getSerialNumber().equals(certificate.getSerialNumber())) {
+                return single;
+            }
+        }
+        return null;
+    }
+
+    private static String statusOf(SingleResp single) {
+        // BouncyCastle represents 'good' as a null status (CertificateStatus.GOOD).
+        Object status = single.getCertStatus();
+        if (status == null) {
+            return "good";
+        }
+        if (status instanceof RevokedStatus revoked) {
+            return "REVOKED " + revoked.getRevocationTime();
+        }
+        return "status unknown";
+    }
+
+    private static String responderOf(BasicOCSPResp response) {
+        X509CertificateHolder[] certificates = response.getCerts();
+        return certificates != null && certificates.length > 0
+                ? shortName(certificates[0])
+                : "a responder the response does not include";
+    }
+
+    private static String shortName(X509CertificateHolder certificate) {
+        RDN[] cn = certificate.getSubject().getRDNs(BCStyle.CN);
+        return cn.length > 0
+                ? IETFUtils.valueToString(cn[0].getFirst().getValue())
+                : certificate.getSubject().toString();
+    }
+
+    private static List<X509CertificateHolder> distinctCertificates(List<byte[]> encoded) throws IOException {
+        List<X509CertificateHolder> result = new ArrayList<>();
+        for (byte[] bytes : encoded) {
+            X509CertificateHolder certificate = new X509CertificateHolder(bytes);
+            if (result.stream().noneMatch(known -> known.equals(certificate))) {
+                result.add(certificate);
+            }
+        }
+        return result;
+    }
+
+    private static List<byte[]> dssStreams(COSDictionary dss, String key) throws IOException {
+        List<byte[]> result = new ArrayList<>();
+        if (dss.getDictionaryObject(COSName.getPDFName(key)) instanceof COSArray array) {
+            for (int i = 0; i < array.size(); i++) {
+                if (array.getObject(i) instanceof COSStream stream) {
+                    try (InputStream in = stream.createInputStream()) {
+                        result.add(in.readAllBytes());
+                    }
+                }
+            }
+        }
+        return result;
     }
 
     private static int arraySize(COSDictionary dictionary, String key) {
