@@ -95,7 +95,7 @@ quietly ignored.
 | `dss.tsa.url` / `policy_id` | — | Required for LT/LTA, and for `document_timestamp`. |
 | `dss.tsa.document_timestamp` | `false` | Append a PAdES document timestamp from this TSA to every signed PDF. See below. |
 | `dss.tsa.hash_algorithm` / `timeout_ms` | `SHA256` / `30000` | Digest sent to the TSA for the document timestamp, and the per-call timeout (TSA and OCSP). |
-| `dss.tsa.validation_data` | `true` | With the document timestamp, also embed the TSA's certificates and OCSP responses in `/DSS`. |
+| `dss.tsa.validation_data` | `true` | Embed the certificates and OCSP responses of every signature and timestamp in `/DSS`. Independent of `document_timestamp`, despite sitting under `tsa`. |
 | `default_credential_strategy` | `LATEST` | See below. |
 | `basic_auth_type` | `implicit` | What `Authorization: Basic` carries. `implicit` — the signer's own id and credential password, as the Ascertia Orchestrator expects. `client_credentials` — an application's client id and secret from `csc-config.registered-clients`. See docs/API.md. |
 | `debug-mode` | `false` | Turns on verbose SDK HTTP logging. Never in production. |
@@ -123,7 +123,9 @@ Orchestrator's output shows as its second signature.
   A document configured to carry a timestamp is never returned without one.
 * With `validation_data: true` (the default), the PDF's Document Security
   Store is filled for **every** signature and timestamp in the document
-  (PAdES Part 4, B-LT):
+  (PAdES Part 4, B-LT). This happens whether or not a document timestamp is
+  added - including when `document_timestamp: false` or a request defers it -
+  because revocation data belongs to the signature, not to the timestamp:
   * `/Certs` — the e-seal certificate and its CA chain, the TSA chain of the
     signature timestamp, and the TSA chain of the document timestamp;
   * `/OCSPs` — an OCSP response for each of those certificates below a root,

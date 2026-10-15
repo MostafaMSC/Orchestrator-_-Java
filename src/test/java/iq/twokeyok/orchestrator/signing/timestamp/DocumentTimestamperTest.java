@@ -75,6 +75,7 @@ import iq.twokeyok.orchestrator.error.ErrorCode;
 import iq.twokeyok.orchestrator.error.OrchestratorException;
 import iq.twokeyok.orchestrator.ops.PdfSignatureInspector;
 import iq.twokeyok.orchestrator.ops.TestPdfGenerator;
+import iq.twokeyok.orchestrator.signing.SignJob;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -284,6 +285,23 @@ class DocumentTimestamperTest {
         Path file = Files.write(dir.resolve("stamped-ltv.pdf"), stamped);
         assertThat(PdfSignatureInspector.inspect(file.toString()))
                 .as("signature and document timestamp still verify after the /DSS updates").isZero();
+    }
+
+    @Test
+    void addsTheValidationDataWithoutADocumentTimestamp() throws Exception {
+        byte[] signed = signedPdf(null);
+        assertThat(hasDss(signed)).as("the signature alone carries no /DSS").isFalse();
+
+        byte[] withData = timestamperWithValidationData()
+                .addValidationDataAll(List.of(new SignJob.SignResult.SignedDocument("doc.pdf", signed)), "test")
+                .get(0).content();
+
+        assertThat(hasDss(withData)).as("/DSS written although no timestamp was appended").isTrue();
+        assertThat(responsesIn(withData)).as("a response for each certificate below a root").isPositive();
+        try (PDDocument document = PDDocument.load(withData)) {
+            assertThat(document.getSignatureDictionaries())
+                    .as("the validation data alone appends no timestamp").hasSize(1);
+        }
     }
 
     @Test

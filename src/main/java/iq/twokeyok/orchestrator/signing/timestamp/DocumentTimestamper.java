@@ -33,7 +33,11 @@ import iq.twokeyok.orchestrator.signing.SignJob.SignResult.SignedDocument;
  * signature is not touched: an incremental update only appends bytes, so its
  * ByteRange still covers exactly what it covered before.</p>
  *
- * <p>Off unless {@code signing.dss.tsa.document-timestamp} is {@code true}.</p>
+ * <p>Off unless {@code signing.dss.tsa.document-timestamp} is {@code true}.
+ * The {@code /DSS} validation data it also writes is governed separately by
+ * {@code signing.dss.tsa.validation-data} and is added whether or not a
+ * document timestamp is: revocation data belongs to the signature, not to the
+ * timestamp.</p>
  */
 @Component
 public class DocumentTimestamper {
@@ -59,14 +63,21 @@ public class DocumentTimestamper {
                 ? new TsaClient(config.url(), config.policyId(), config.hashAlgorithm(), config.timeoutMs(),
                         properties.truststorePath(), properties.truststorePassword())
                 : null;
-        this.validationData = tsa != null && config.validationData()
+        // Validation data does not depend on the timestamp. A signature needs
+        // revocation data for its own signing time whether or not a document
+        // timestamp follows it, and tying the two left every signature made
+        // without one carrying none at all.
+        this.validationData = config.validationData()
                 ? new LongTermValidationData(
                         new OcspClient(config.timeoutMs(), properties.dss().ocsp().trustedResponders()),
                         properties.dss().ocsp().url())
                 : null;
         if (tsa != null) {
-            log.info("Signed documents receive a document timestamp from {}{}", tsa.url(),
-                    validationData == null ? "" : ", with the validation data for every signature and timestamp in /DSS");
+            log.info("Signed documents receive a document timestamp from {}", tsa.url());
+        }
+        if (validationData != null) {
+            log.info("Signed documents receive the validation data for every signature in /DSS, "
+                    + "with or without a document timestamp");
         }
     }
 
@@ -88,6 +99,24 @@ public class DocumentTimestamper {
         List<SignedDocument> result = new ArrayList<>(documents.size());
         for (SignedDocument document : documents) {
             result.add(new SignedDocument(document.fileName(), timestamp(document.content(), requestId)));
+        }
+        return result;
+    }
+
+    /**
+     * The validation data on its own, for a document that is not getting a
+     * document timestamp. Without this a signature made with
+     * {@code document_timestamp: false}, or with the timestamp deferred by the
+     * request, carried no revocation data for its own signing time.
+     */
+    public List<SignedDocument> addValidationDataAll(List<SignedDocument> documents, String requestId) {
+        if (validationData == null) {
+            return documents;
+        }
+        List<SignedDocument> result = new ArrayList<>(documents.size());
+        for (SignedDocument document : documents) {
+            result.add(new SignedDocument(document.fileName(),
+                    validationData.addFor(document.content(), requestId, new LongTermValidationData.Attempted())));
         }
         return result;
     }

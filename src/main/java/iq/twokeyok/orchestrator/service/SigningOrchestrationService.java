@@ -126,9 +126,13 @@ public class SigningOrchestrationService {
             if (documentTimestamper.isEnabled() && !timestamp) {
                 log.info("[{}] Document timestamp deferred by the request (document_timestamp=false)", requestId);
             }
+            // The validation data is written either way: revocation data belongs
+            // to the signature, not to the timestamp, and a signature made
+            // without one still needs it for its own signing time. With the
+            // timestamp, timestampAll writes it first so the token covers it.
             List<SignJob.SignResult.SignedDocument> signed = timestamp
                     ? documentTimestamper.timestampAll(result.documents(), requestId)
-                    : result.documents();
+                    : documentTimestamper.addValidationDataAll(result.documents(), requestId);
             ContainerPackager.Payload payload = packager.pack(signed, config.containerType());
             audit.signed(requestId, caller, config, documents.size(), result.transactionId(),
                     System.currentTimeMillis() - startedAt);

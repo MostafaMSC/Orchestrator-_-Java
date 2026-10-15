@@ -525,7 +525,13 @@ public final class PdfSignatureInspector {
                 continue;
             }
             if (!(vri.getDictionaryObject(COSName.getPDFName(key)) instanceof COSDictionary entry)) {
-                out.add(label + "  -  no /VRI entry of its own");
+                // The last document timestamp is expected to have none: its own
+                // validation data arrives with the next archive timestamp, and
+                // writing it now would mean a /DSS revision no timestamp covers.
+                out.add(label + (isTimestamp && i == signatures.size() - 1
+                        ? "  -  none yet, as PAdES-LTA expects: its validation data"
+                                + " comes with the next archive timestamp"
+                        : "  -  no /VRI entry of its own"));
                 continue;
             }
             matched++;

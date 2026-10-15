@@ -72,9 +72,14 @@ signing:
       document_timestamp: false
       hash_algorithm: SHA256
       timeout_ms: 30000
-      # Also put the TSA's certificates and OCSP responses into the PDF's /DSS,
-      # so readers validate the timestamp offline. The OCSP responder named in
-      # the TSA certificate must be reachable from this host.
+      # Put the certificates and OCSP responses of every signature and
+      # timestamp into the PDF's /DSS, so readers validate them offline. This
+      # does not depend on document_timestamp: revocation data belongs to the
+      # signature, and a signature made without a timestamp needs it just the
+      # same. Every signing asks the responder again, so each signature carries
+      # a response produced at its own signing time, and /VRI says which
+      # responses belong to which signature. The responders named in the
+      # certificates must be reachable from this host.
       validation_data: true
     ocsp:
       url: ${ADSS_OCSP_URL:http://adss-ocsp.internal.example/adss/ocsp}
