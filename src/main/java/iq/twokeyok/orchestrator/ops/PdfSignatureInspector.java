@@ -162,7 +162,7 @@ public final class PdfSignatureInspector {
                 out.add("  ByteRange covers whole file : " + (coversWholeFile(signatures, bytes.length)
                         ? "yes" : "NO — content exists outside the signed ranges"));
                 out.add("  /DSS validation material    : " + (hasDss ? "present (LT / LTV)" : "absent"));
-                describeDss(dssBase, out);
+                describeDss(dssBase, signatures, bytes, out);
                 out.add("  Document signatures         : " + documentSignatures);
                 out.add("  Document timestamps         : " + documentTimestamps
                         + (documentTimestamps > 0 ? "  (PAdES-LTA)" : ""));
@@ -487,18 +487,25 @@ public final class PdfSignatureInspector {
      * lets a reader take what it needs from {@code /Certs} and {@code /OCSPs}
      * directly - so an empty one is reported plainly rather than as a fault.</p>
      */
-    private static void describeDss(COSBase dssBase, List<String> out) {
+    private static void describeDss(COSBase dssBase, List<PDSignature> signatures, byte[] pdf, List<String> out) {
         if (!(dssBase instanceof COSDictionary dss)) {
             return;
         }
         out.add("    certificates              : " + arraySize(dss, "Certs"));
         out.add("    OCSP responses            : " + arraySize(dss, "OCSPs"));
         out.add("    CRLs                      : " + arraySize(dss, "CRLs"));
-        describeVri(dss, out);
+        describeVri(dss, signatures, pdf, out);
         describeRevocationCoverage(dss, out);
     }
 
-    private static void describeVri(COSDictionary dss, List<String> out) {
+    /**
+     * Whether each signature has validation material of its own, resolved the
+     * way a reader resolves it: by looking up the signature's own {@code /VRI}
+     * key. Reporting the keys alone would say an entry exists without saying
+     * which signature it belongs to, and a key matching no signature is the
+     * failure this is meant to catch.
+     */
+    private static void describeVri(COSDictionary dss, List<PDSignature> signatures, byte[] pdf, List<String> out) {
         String optional = "  (optional; readers may use /Certs and /OCSPs directly)";
         if (!(dss.getDictionaryObject(COSName.getPDFName("VRI")) instanceof COSDictionary vri)) {
             out.add("    per-signature (/VRI)      : absent" + optional);
@@ -507,12 +514,42 @@ public final class PdfSignatureInspector {
         int entries = vri.keySet().size();
         out.add("    per-signature (/VRI)      : " + entries + " entr" + (entries == 1 ? "y" : "ies")
                 + (entries == 0 ? optional : ""));
-        for (COSName key : vri.keySet()) {
-            if (vri.getDictionaryObject(key) instanceof COSDictionary signatureVri) {
-                out.add("      " + key.getName() + "  certs=" + arraySize(signatureVri, "Cert")
-                        + " ocsp=" + arraySize(signatureVri, "OCSP")
-                        + " crl=" + arraySize(signatureVri, "CRL"));
+        int matched = 0;
+        for (int i = 0; i < signatures.size(); i++) {
+            PDSignature signature = signatures.get(i);
+            boolean isTimestamp = TIMESTAMP_SUBFILTER.equals(signature.getSubFilter());
+            String label = "      " + (isTimestamp ? "document timestamp " : "signature ") + (i + 1);
+            String key = vriKeyOf(signature, pdf);
+            if (key == null) {
+                out.add(label + "  -  its /Contents cannot be read");
+                continue;
             }
+            if (!(vri.getDictionaryObject(COSName.getPDFName(key)) instanceof COSDictionary entry)) {
+                out.add(label + "  -  no /VRI entry of its own");
+                continue;
+            }
+            matched++;
+            out.add(label + "  -  certs=" + arraySize(entry, "Cert")
+                    + " ocsp=" + arraySize(entry, "OCSP")
+                    + " crl=" + arraySize(entry, "CRL"));
+        }
+        if (entries > matched) {
+            out.add("      " + (entries - matched) + " entr" + (entries - matched == 1 ? "y" : "ies")
+                    + " matching no signature in this document");
+        }
+    }
+
+    /** ISO 32000-2 12.8.4.3: the uppercase base-16 SHA-1 of the /Contents value. */
+    private static String vriKeyOf(PDSignature signature, byte[] pdf) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-1").digest(signature.getContents(pdf));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                hex.append(String.format("%02X", b));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            return null;
         }
     }
 

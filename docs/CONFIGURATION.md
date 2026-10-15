@@ -127,7 +127,15 @@ Orchestrator's output shows as its second signature.
   * `/Certs` — the e-seal certificate and its CA chain, the TSA chain of the
     signature timestamp, and the TSA chain of the document timestamp;
   * `/OCSPs` — an OCSP response for each of those certificates below a root,
-    plus the certificates that signed the responses.
+    plus the certificates that signed the responses;
+  * `/VRI` — one entry per signature and timestamp, keyed by the uppercase
+    base-16 SHA-1 of its `/Contents`, naming that signature's own material.
+
+  A document signed several times gets a fresh set of responses for each
+  signature, even for a certificate already covered: a response produced before
+  a signature existed says nothing about whether the certificate was still
+  valid when that signature was made. Certificates are still stored once; only
+  responses repeat, and `/VRI` says which belong to which.
 
   Readers can then validate everything offline. With an `ETSI.CAdES.detached`
   signature this is where they look for revocation data; without it Acrobat

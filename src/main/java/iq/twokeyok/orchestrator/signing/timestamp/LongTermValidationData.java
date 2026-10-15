@@ -5,8 +5,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.math.BigInteger;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Calendar;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -31,9 +34,6 @@ import org.bouncycastle.asn1.cms.AttributeTable;
 import org.bouncycastle.asn1.ocsp.OCSPResponse;
 import org.bouncycastle.asn1.pkcs.PKCSObjectIdentifiers;
 import org.bouncycastle.cert.X509CertificateHolder;
-import org.bouncycastle.cert.ocsp.BasicOCSPResp;
-import org.bouncycastle.cert.ocsp.OCSPResp;
-import org.bouncycastle.cert.ocsp.SingleResp;
 import org.bouncycastle.cms.CMSSignedData;
 import org.bouncycastle.cms.SignerInformation;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -61,9 +61,15 @@ import org.slf4j.LoggerFactory;
  * instead. Every response, fetched or embedded, must be signed by the issuing
  * CA or a responder that CA authorised and report the certificate as good.</p>
  *
- * <p>Written as an incremental update, so no signature or timestamp is
- * touched. What the {@code /DSS} already covers is not added again, and when
- * nothing is new the document is returned unchanged.</p>
+ * <p>Every signature gets its own responses, even for a certificate the
+ * {@code /DSS} already covers. A response produced before a signature existed
+ * says nothing about whether the certificate was still valid when that
+ * signature was made, so reusing one would leave each signature after the first
+ * without revocation data for its own signing time. {@code /VRI} records which
+ * responses belong to which signature; a certificate is still stored once.</p>
+ *
+ * <p>Written as an incremental update, so no signature or timestamp is touched,
+ * and when nothing is new the document is returned unchanged.</p>
  */
 public class LongTermValidationData {
 
@@ -119,8 +125,13 @@ public class LongTermValidationData {
                 if (!material.existingCertificates.contains(key(certificate))) {
                     put(newCertificates, certificate);
                 }
+                // A response already in the /DSS is deliberately not reused. It
+                // was produced before this signature existed, so it says nothing
+                // about whether the certificate was still valid at this signing
+                // time - only a response produced now does. Every signature
+                // therefore gets its own, and attempted still stops the same
+                // certificate being asked about twice within one request.
                 if (OcspClient.isSelfSigned(certificate) || isOcspNoCheck(certificate)
-                        || material.covered(certificate)
                         || !attempted.serials.add(certificate.getSerialNumber())) {
                     continue;
                 }
@@ -177,7 +188,6 @@ public class LongTermValidationData {
         final List<X509CertificateHolder> chain = new ArrayList<>();
         final List<byte[]> embeddedResponses = new ArrayList<>();
         final Set<String> existingCertificates = new LinkedHashSet<>();
-        final List<BasicOCSPResp> existingResponses = new ArrayList<>();
 
         void add(Collection<X509CertificateHolder> certificates) {
             for (X509CertificateHolder certificate : certificates) {
@@ -185,18 +195,6 @@ public class LongTermValidationData {
                     chain.add(certificate);
                 }
             }
-        }
-
-        /** Whether the /DSS already holds an OCSP response about this certificate. */
-        boolean covered(X509CertificateHolder certificate) {
-            for (BasicOCSPResp response : existingResponses) {
-                for (SingleResp single : response.getResponses()) {
-                    if (single.getCertID().getSerialNumber().equals(certificate.getSerialNumber())) {
-                        return true;
-                    }
-                }
-            }
-            return false;
         }
     }
 
@@ -231,13 +229,6 @@ public class LongTermValidationData {
             if (dss instanceof COSDictionary dictionary) {
                 for (byte[] certificate : streams(dictionary, "Certs")) {
                     material.existingCertificates.add(Base64.getEncoder().encodeToString(certificate));
-                }
-                for (byte[] response : streams(dictionary, "OCSPs")) {
-                    try {
-                        material.existingResponses.add((BasicOCSPResp) new OCSPResp(response).getResponseObject());
-                    } catch (Exception e) {
-                        // An unreadable entry is simply not counted as coverage.
-                    }
                 }
             }
         }
@@ -363,18 +354,27 @@ public class LongTermValidationData {
             }
             COSArray certs = arrayIn(dss, "Certs");
             COSArray ocsps = arrayIn(dss, "OCSPs");
+            List<COSStream> addedCertificates = new ArrayList<>();
+            List<COSStream> addedResponses = new ArrayList<>();
             for (byte[] certificate : certificates) {
-                certs.add(stream(document, certificate));
+                COSStream stream = stream(document, certificate);
+                certs.add(stream);
+                addedCertificates.add(stream);
             }
             for (byte[] response : responses) {
-                ocsps.add(stream(document, response));
+                COSStream stream = stream(document, response);
+                ocsps.add(stream);
+                addedResponses.add(stream);
             }
-            // /VRI is optional, but the ADSS SDK reads it without a null check
-            // when /DSS has no /CRLs: without one, the document cannot be signed
-            // again. An empty dictionary is valid and keeps the SDK happy.
-            if (asDictionary(dss.getDictionaryObject(COSName.getPDFName("VRI"))) == null) {
-                dss.setItem(COSName.getPDFName("VRI"), new COSDictionary());
+            // /VRI must exist even when it holds nothing: the ADSS SDK reads it
+            // without a null check when /DSS has no /CRLs, and without one the
+            // document cannot be signed again.
+            COSDictionary vri = asDictionary(dss.getDictionaryObject(COSName.getPDFName("VRI")));
+            if (vri == null) {
+                vri = new COSDictionary();
+                dss.setItem(COSName.getPDFName("VRI"), vri);
             }
+            addVriEntries(document, pdf, vri, addedCertificates, addedResponses);
             declareExtension(catalog);
 
             // An incremental save writes only what is marked as changed.
@@ -382,11 +382,74 @@ public class LongTermValidationData {
             dss.setNeedToBeUpdated(true);
             certs.setNeedToBeUpdated(true);
             ocsps.setNeedToBeUpdated(true);
+            vri.setNeedToBeUpdated(true);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream(pdf.length + 32_768);
             document.saveIncremental(out);
             return out.toByteArray();
         }
+    }
+
+    /**
+     * Gives each signature a {@code /VRI} entry of its own, holding the material
+     * this request fetched, keyed by the uppercase base-16 SHA-1 of the
+     * signature's {@code /Contents} as ISO 32000-2 12.8.4.3 requires.
+     *
+     * <p>Without it every response lies in one flat {@code /OCSPs} pool and
+     * nothing says which signature a response belongs to - the distinction that
+     * matters once a document is signed several times, because each signature
+     * needs the response produced at <em>its</em> signing time. A signature that
+     * already has an entry keeps it: that material was collected when it was
+     * made, and this request's responses postdate it.</p>
+     */
+    private static void addVriEntries(PDDocument document, byte[] pdf, COSDictionary vri,
+                                      List<COSStream> certificates, List<COSStream> responses)
+            throws IOException {
+        if (certificates.isEmpty() && responses.isEmpty()) {
+            return;
+        }
+        Calendar now = Calendar.getInstance();
+        for (PDSignature signature : document.getSignatureDictionaries()) {
+            String key;
+            try {
+                key = vriKey(signature.getContents(pdf));
+            } catch (Exception e) {
+                // A signature whose /Contents cannot be read cannot be keyed;
+                // its material is still in /Certs and /OCSPs.
+                continue;
+            }
+            if (vri.getDictionaryObject(COSName.getPDFName(key)) != null) {
+                continue;
+            }
+            COSDictionary entry = new COSDictionary();
+            if (!certificates.isEmpty()) {
+                entry.setItem(COSName.getPDFName("Cert"), arrayOf(certificates));
+            }
+            if (!responses.isEmpty()) {
+                entry.setItem(COSName.getPDFName("OCSP"), arrayOf(responses));
+            }
+            entry.setDate(COSName.getPDFName("TU"), now);
+            entry.setNeedToBeUpdated(true);
+            vri.setItem(COSName.getPDFName(key), entry);
+        }
+    }
+
+    /** ISO 32000-2 12.8.4.3: the uppercase base-16 SHA-1 of the /Contents value. */
+    private static String vriKey(byte[] contents) throws NoSuchAlgorithmException {
+        byte[] digest = MessageDigest.getInstance("SHA-1").digest(contents);
+        StringBuilder hex = new StringBuilder(digest.length * 2);
+        for (byte b : digest) {
+            hex.append(String.format("%02X", b));
+        }
+        return hex.toString();
+    }
+
+    /** The streams are shared with /Certs and /OCSPs, not written again. */
+    private static COSArray arrayOf(List<COSStream> streams) {
+        COSArray array = new COSArray();
+        streams.forEach(array::add);
+        array.setNeedToBeUpdated(true);
+        return array;
     }
 
     private static COSArray arrayIn(COSDictionary dss, String key) {
