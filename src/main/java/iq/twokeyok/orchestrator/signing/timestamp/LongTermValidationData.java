@@ -354,12 +354,9 @@ public class LongTermValidationData {
             }
             COSArray certs = arrayIn(dss, "Certs");
             COSArray ocsps = arrayIn(dss, "OCSPs");
-            List<COSStream> addedCertificates = new ArrayList<>();
             List<COSStream> addedResponses = new ArrayList<>();
             for (byte[] certificate : certificates) {
-                COSStream stream = stream(document, certificate);
-                certs.add(stream);
-                addedCertificates.add(stream);
+                certs.add(stream(document, certificate));
             }
             for (byte[] response : responses) {
                 COSStream stream = stream(document, response);
@@ -374,7 +371,10 @@ public class LongTermValidationData {
                 vri = new COSDictionary();
                 dss.setItem(COSName.getPDFName("VRI"), vri);
             }
-            addVriEntries(document, pdf, vri, addedCertificates, addedResponses);
+            // Every certificate in the /DSS, not only the ones this request
+            // added: a certificate is stored once, so later signatures add none
+            // and their entries would otherwise list no certificate at all.
+            addVriEntries(document, pdf, vri, streamsIn(certs), addedResponses);
             declareExtension(catalog);
 
             // An incremental save writes only what is marked as changed.
@@ -401,6 +401,11 @@ public class LongTermValidationData {
      * needs the response produced at <em>its</em> signing time. A signature that
      * already has an entry keeps it: that material was collected when it was
      * made, and this request's responses postdate it.</p>
+     *
+     * <p>The {@code /Cert} array lists every certificate the {@code /DSS} holds,
+     * which for a document signed by one seal is its chain and the TSAs' - a
+     * superset a reader selects from, rather than the empty array a later
+     * signature would get from a certificate store that keeps each one once.</p>
      */
     private static void addVriEntries(PDDocument document, byte[] pdf, COSDictionary vri,
                                       List<COSStream> certificates, List<COSStream> responses)
@@ -442,6 +447,16 @@ public class LongTermValidationData {
             hex.append(String.format("%02X", b));
         }
         return hex.toString();
+    }
+
+    private static List<COSStream> streamsIn(COSArray array) {
+        List<COSStream> streams = new ArrayList<>();
+        for (int i = 0; i < array.size(); i++) {
+            if (array.getObject(i) instanceof COSStream stream) {
+                streams.add(stream);
+            }
+        }
+        return streams;
     }
 
     /** The streams are shared with /Certs and /OCSPs, not written again. */
