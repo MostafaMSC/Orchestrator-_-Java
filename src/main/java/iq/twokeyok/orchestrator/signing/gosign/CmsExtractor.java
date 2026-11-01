@@ -1,9 +1,12 @@
 package iq.twokeyok.orchestrator.signing.gosign;
 
+import java.io.ByteArrayInputStream;
 import java.util.List;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.interactive.digitalsignature.PDSignature;
+import org.bouncycastle.asn1.ASN1InputStream;
+import org.bouncycastle.asn1.ASN1Primitive;
 import org.bouncycastle.cms.CMSSignedData;
 
 import iq.twokeyok.orchestrator.error.ErrorCode;
@@ -48,7 +51,7 @@ public final class CmsExtractor {
                         "the returned document carries no signature");
             }
             byte[] contents = signatures.get(signatures.size() - 1).getContents(body);
-            return asCms(trimTrailingZeros(contents));
+            return asCms(firstDerObject(contents));
         } catch (OrchestratorException e) {
             throw e;
         } catch (Exception e) {
@@ -74,14 +77,29 @@ public final class CmsExtractor {
         }
     }
 
-    /** A /Contents taken from a PDF is padded to the reserved size. */
-    private static byte[] trimTrailingZeros(byte[] contents) {
-        int end = contents.length;
-        while (end > 0 && contents[end - 1] == 0) {
-            end--;
+    /**
+     * The signature out of a padded {@code /Contents}.
+     *
+     * <p>A {@code /Contents} is zero-filled to the size reserved for it, so the
+     * padding has to go. Trimming trailing zeros is the obvious way and the
+     * wrong one: a CMS ends in an RSA signature, whose last byte is zero often
+     * enough, and trimming those eats part of the structure. So the first ASN.1
+     * object is read instead and its own declared length decides where the
+     * signature ends.</p>
+     */
+    private static byte[] firstDerObject(byte[] contents) {
+        try (ASN1InputStream asn1 = new ASN1InputStream(new ByteArrayInputStream(contents))) {
+            ASN1Primitive first = asn1.readObject();
+            if (first == null) {
+                throw new OrchestratorException(ErrorCode.TOKEN_SIGNATURE_INVALID,
+                        "the signature field is empty");
+            }
+            return first.getEncoded("DER");
+        } catch (OrchestratorException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new OrchestratorException(ErrorCode.TOKEN_SIGNATURE_INVALID,
+                    "the signature field does not hold an ASN.1 structure: " + e.getMessage());
         }
-        byte[] trimmed = new byte[end];
-        System.arraycopy(contents, 0, trimmed, 0, end);
-        return trimmed;
     }
 }
