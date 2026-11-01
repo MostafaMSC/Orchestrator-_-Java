@@ -28,13 +28,13 @@ import iq.twokeyok.orchestrator.appearance.ResolvedAppearance.SignatureBox;
  * it appends instead - every earlier byte kept - which is what a second signer
  * needs. The field is added here as an incremental update for that reason.</p>
  */
-final class EmptySignatureField {
+public final class EmptySignatureField {
 
     private EmptySignatureField() {
     }
 
     /** Whether the document carries at least one signature already. */
-    static boolean isSigned(byte[] pdf) {
+    public static boolean isSigned(byte[] pdf) {
         try (PDDocument document = PDDocument.load(pdf)) {
             return !document.getSignatureDictionaries().isEmpty();
         } catch (IOException e) {
@@ -47,7 +47,7 @@ final class EmptySignatureField {
      *         {@code box}, appended as an incremental update; the document as it
      *         is when a field of that name exists already
      */
-    static byte[] append(byte[] pdf, String name, SignatureBox box) throws IOException {
+    public static byte[] append(byte[] pdf, String name, SignatureBox box) throws IOException {
         try (PDDocument document = PDDocument.load(pdf)) {
             PDAcroForm form = document.getDocumentCatalog().getAcroForm();
             if (form == null) {

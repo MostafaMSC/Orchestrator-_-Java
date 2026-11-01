@@ -68,7 +68,31 @@ public enum ErrorCode {
                     + "was given to create it. Send signature_appearance.signature_field or use a template with one",
             HttpStatus.BAD_REQUEST),
     TSA_UNAVAILABLE(1129, "The timestamp authority is not reachable: {0}", HttpStatus.BAD_GATEWAY),
-    TSA_REJECTED(1130, "The timestamp authority did not grant a timestamp: {0}", HttpStatus.BAD_GATEWAY);
+    TSA_REJECTED(1130, "The timestamp authority did not grant a timestamp: {0}", HttpStatus.BAD_GATEWAY),
+    TOKEN_SIGNING_NOT_CONFIGURED(1131,
+            "Token signing is not configured in this orchestrator. Set signing.gosign.url, "
+                    + "signing.gosign.originator_id and signing.gosign.profile_id",
+            HttpStatus.INTERNAL_SERVER_ERROR),
+    GOSIGN_UNAVAILABLE(1132, "The Go>Sign service is not reachable: {0}", HttpStatus.BAD_GATEWAY),
+    GOSIGN_REJECTED(1133, "The Go>Sign service rejected the request: {0}", HttpStatus.BAD_GATEWAY),
+    TOKEN_SESSION_UNKNOWN(1134,
+            "Signing session [{0}] is unknown or has expired. Prepare the document again",
+            HttpStatus.NOT_FOUND),
+    TOKEN_SESSION_PENDING(1135,
+            "The token has not signed yet. Complete the signature in the browser, then retry",
+            HttpStatus.CONFLICT),
+    TOKEN_SESSION_SPENT(1136,
+            "Signing session [{0}] was already completed. Its signed document was returned once",
+            HttpStatus.CONFLICT),
+    TOKEN_SESSION_LIMIT(1137,
+            "The orchestrator is holding its maximum number of prepared signing sessions",
+            HttpStatus.SERVICE_UNAVAILABLE),
+    TOKEN_SIGNATURE_INVALID(1138,
+            "The signature the token produced does not verify over the prepared document: {0}",
+            HttpStatus.BAD_GATEWAY),
+    TOKEN_DOCUMENT_TAMPERED(1139,
+            "The prepared document changed between preparing and signing it",
+            HttpStatus.INTERNAL_SERVER_ERROR);
 
     private final int code;
     private final String message;

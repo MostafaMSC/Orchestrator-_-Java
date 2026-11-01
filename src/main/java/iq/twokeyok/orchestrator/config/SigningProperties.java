@@ -45,6 +45,7 @@ public record SigningProperties(
         @DefaultValue Verification verification,
         @DefaultValue Ras ras,
         @DefaultValue Dss dss,
+        @DefaultValue GoSign gosign,
         @DefaultValue Limits limits,
         @DefaultValue DynamicSigner dynamicSigner,
         Map<String, Signer> signers) {
@@ -107,6 +108,43 @@ public record SigningProperties(
             String tlsProtocol,
             @DefaultValue Proxy proxy,
             @DefaultValue StatusPolling statusPolling) {
+    }
+
+    /**
+     * ADSS Go>Sign Service, for signing with a key on the signer's own token.
+     *
+     * <p>The orchestrator cannot drive a USB token attached to someone else's
+     * machine, so this is a two-call flow: it prepares the document and hands
+     * back the snippet Go>Sign returns, the signer's browser runs that snippet
+     * against Go>Sign Desktop, and a second call collects the signature. The
+     * document stays here throughout; only its hash is registered with Go>Sign
+     * ({@code REQUEST_TYPE: SET_HASH}).</p>
+     */
+    public record GoSign(
+            /** Go>Sign Service endpoint, e.g. {@code https://gosign-stg.techsource.iq/}. */
+            String url,
+            /** {@code ORIGINATOR_ID} Go>Sign expects, e.g. {@code barakat}. */
+            String originatorId,
+            /** Go>Sign profile, e.g. {@code adss:gosign:profile:007}. */
+            String profileId,
+            @DefaultValue("60000") int timeoutMs,
+            /**
+             * How long a prepared document waits for the token to sign it. The
+             * signer has to open the page, pick a certificate and enter a PIN,
+             * so this is minutes rather than seconds.
+             */
+            @DefaultValue("900") int sessionTtlSeconds,
+            /** Prepared documents held at once; each keeps a PDF in memory. */
+            @DefaultValue("50") int maxConcurrentSessions,
+            /**
+             * Digest registered with Go>Sign. It must match the profile's own
+             * hash algorithm - the snippet of profile 007 reports
+             * {@code GoSign_SetHashAlgorithm(SHA256)} - or the token signs a
+             * digest the signature cannot be verified against.
+             */
+            @DefaultValue("SHA256") String hashAlgorithm,
+            /** Bytes reserved in {@code /Contents} for the signature. */
+            @DefaultValue("20000") int signatureSize) {
     }
 
     /** The ADSS Verification Service, used when a signature is upgraded to LT/LTA. */
@@ -395,7 +433,14 @@ public record SigningProperties(
 
     public enum SignerType {
         ESEAL,
-        NATURAL_PERSON
+        NATURAL_PERSON,
+        /**
+         * Signs with a key on the signer's own token through Go>Sign. No
+         * {@code certificateAlias} or {@code credentialPassword}: the
+         * certificate is chosen on the token at signing time, and the PIN is
+         * entered there and never reaches the orchestrator.
+         */
+        TOKEN
     }
 
     /**
